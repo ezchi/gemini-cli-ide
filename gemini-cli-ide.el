@@ -680,8 +680,7 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
       (when gemini-cli-ide-system-prompt
         (setq combined-prompt (concat combined-prompt "\n\n" gemini-cli-ide-system-prompt)))
       ;; Add the combined prompt to the command
-      (setq gemini-cmd (concat gemini-cmd " --prompt "
-                               (shell-quote-argument combined-prompt))))
+      )
     ;; Add any extra flags
     (when (and gemini-cli-ide-cli-extra-flags
                (not (string-empty-p gemini-cli-ide-cli-extra-flags)))
