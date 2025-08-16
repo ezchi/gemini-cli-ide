@@ -128,7 +128,7 @@ TEST_FAILED=0
 if [ $COMPILE_EXIT_CODE -eq 0 ] && [ $NATIVE_COMPILE_EXIT_CODE -eq 0 ]; then
     echo "" >&2
     echo "=== Running tests ===" >&2
-    emacs -batch -L . -l ert -l claude-code-ide-tests.el -f ert-run-tests-batch-and-exit >&2
+    emacs -batch -L . -l ert -l gemini-cli-ide-tests.el -f ert-run-tests-batch-and-exit >&2
     TEST_EXIT_CODE=$?
 
     if [ $TEST_EXIT_CODE -eq 0 ]; then

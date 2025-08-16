@@ -23,7 +23,7 @@
 ;;; Commentary:
 
 ;; This module provides an MCP tools server that exposes Emacs functions
-;; to Gemini Cli.  Unlike the IDE MCP server (which uses WebSocket),
+;; to Gemini CLI.  Unlike the IDE MCP server (which uses WebSocket),
 ;; this uses HTTP/Streamable HTTP transport and provides access to
 ;; general Emacs functionality like xref, project navigation, etc.
 ;;

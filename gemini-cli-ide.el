@@ -207,15 +207,6 @@ environments."
                  (const :tag "eat" eat))
   :group 'gemini-cli-ide)
 
-(defcustom gemini-cli-ide-prevent-reflow-glitch t
-  "Workaround for Gemini CLI terminal scrolling bug #1422.
-When non-nil (default), prevents the terminal from reflowing on height-only
-changes which can trigger uncontrollable scrolling in Gemini CLI.
-See: https://github.com/anthropics/gemini-cli/issues/1422
-This setting should be removed once the upstream bug is fixed."
-  :type 'boolean
-  :group 'gemini-cli-ide)
-
 (defcustom gemini-cli-ide-vterm-anti-flicker t
   "Enable intelligent flicker reduction for vterm display.
 When enabled, this feature optimizes terminal rendering by detecting
@@ -272,7 +263,7 @@ a more stable viewing experience when working with multiple windows."
 ;;; Variables
 
 (defvar gemini-cli-ide--cli-available nil
-  "Whether Gemini CLI CLI is available and detected.")
+  "Whether Gemini CLI is available and detected.")
 
 (defvar gemini-cli-ide--processes (make-hash-table :test 'equal)
   "Hash table mapping project/directory roots to their Gemini CLI processes.")
@@ -532,11 +523,6 @@ If DIRECTORY is not provided, use the current working directory."
 (defun gemini-cli-ide--set-process (process &optional directory)
   "Set the Gemini CLI PROCESS for DIRECTORY or current working directory."
   ;; Check if this is the first session starting
-  (when (and gemini-cli-ide-prevent-reflow-glitch
-             (= (hash-table-count gemini-cli-ide--processes) 0))
-    ;; Apply advice globally for the first session
-    (advice-add (gemini-cli-ide--terminal-resize-handler)
-                :around #'gemini-cli-ide--terminal-reflow-filter))
   (puthash (or directory (gemini-cli-ide--get-working-directory))
            process
            gemini-cli-ide--processes))
@@ -606,11 +592,7 @@ If `gemini-cli-ide-focus-on-open' is non-nil, the window is selected."
           ;; Remove from process table
           (remhash directory gemini-cli-ide--processes)
           ;; Check if this was the last session
-          (when (and gemini-cli-ide-prevent-reflow-glitch
-                     (= (hash-table-count gemini-cli-ide--processes) 0))
-            ;; Remove advice globally when no sessions remain
-            (advice-remove (gemini-cli-ide--terminal-resize-handler)
-                           #'gemini-cli-ide--terminal-reflow-filter))
+
           ;; Remove vterm rendering optimization if no sessions remain
           (when (and (eq gemini-cli-ide-terminal-backend 'vterm)
                      gemini-cli-ide-vterm-anti-flicker
@@ -632,7 +614,7 @@ If `gemini-cli-ide-focus-on-open' is non-nil, the window is selected."
                       (kill-buffer-query-functions nil)) ; Don't ask for confirmation
                   (kill-buffer buffer)))))
           (gemini-cli-ide-debug "Cleaned up Gemini CLI session for %s"
-                                 (file-name-nondirectory (directory-file-name directory))))
+                                (file-name-nondirectory (directory-file-name directory))))
       (setq gemini-cli-ide--cleanup-in-progress nil))))
 
 ;;; CLI Detection
@@ -698,7 +680,7 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
       (when gemini-cli-ide-system-prompt
         (setq combined-prompt (concat combined-prompt "\n\n" gemini-cli-ide-system-prompt)))
       ;; Add the combined prompt to the command
-      (setq gemini-cmd (concat gemini-cmd " --append-system-prompt "
+      (setq gemini-cmd (concat gemini-cmd " --prompt "
                                (shell-quote-argument combined-prompt))))
     ;; Add any extra flags
     (when (and gemini-cli-ide-cli-extra-flags
@@ -891,6 +873,8 @@ This function handles:
                      (process (cdr buffer-and-process)))
                 ;; Notify MCP tools server about new session with session info
                 (gemini-cli-ide-mcp-server-session-started session-id working-dir buffer)
+                (gemini-cli-ide-debug "MCP session started with ID: %s in %s"
+                                      session-id (file-name-nondirectory (directory-file-name working-dir)))
                 (gemini-cli-ide--set-process process working-dir)
                 ;; Store session ID for cleanup
                 (puthash working-dir session-id gemini-cli-ide--session-ids)
@@ -901,13 +885,16 @@ This function handles:
                                         (when (string-match "exited abnormally with code \\([0-9]+\\)" event)
                                           (let ((exit-code (match-string 1 event)))
                                             (gemini-cli-ide-debug "Gemini process exited with code %s, event: %s"
-                                                                   exit-code event)
+                                                                  exit-code event)
                                             (message "Gemini exited with error code %s" exit-code)))
                                         (when (or (string-match "finished" event)
                                                   (string-match "exited" event)
                                                   (string-match "killed" event)
                                                   (string-match "terminated" event))
                                           (gemini-cli-ide--cleanup-on-exit working-dir))))
+                (gemini-cli-ide-debug "Gemini CLI session started in %s with MCP on port %d"
+                                      (file-name-nondirectory (directory-file-name working-dir))
+                                      port)
                 ;; Also add buffer kill hook as a backup
                 (with-current-buffer buffer
                   (add-hook 'kill-buffer-hook
@@ -934,12 +921,12 @@ This function handles:
                 ;; Display the buffer in a side window
                 (gemini-cli-ide--display-buffer-in-side-window buffer)
                 (gemini-cli-ide-log "Gemini CLI %sstarted in %s with MCP on port %d%s"
-                                     (cond (continue "continued and ")
-                                           (resume "resumed and ")
-                                           (t ""))
-                                     (file-name-nondirectory (directory-file-name working-dir))
-                                     port
-                                     (if gemini-cli-ide-cli-debug " (debug mode enabled)" ""))))
+                                    (cond (continue "continued and ")
+                                          (resume "resumed and ")
+                                          (t ""))
+                                    (file-name-nondirectory (directory-file-name working-dir))
+                                    port
+                                    (if gemini-cli-ide-cli-debug " (debug mode enabled)" ""))))
           (error
            ;; Terminal session creation failed - clean up MCP server
            (when port
@@ -994,7 +981,7 @@ conversation in the current directory."
           ;; The process sentinel will handle cleanup when the process dies
           (kill-buffer buffer)
           (gemini-cli-ide-log "Stopping Gemini CLI in %s..."
-                               (file-name-nondirectory (directory-file-name working-dir))))
+                              (file-name-nondirectory (directory-file-name working-dir))))
       (gemini-cli-ide-log "No Gemini CLI session is running in this directory"))))
 
 

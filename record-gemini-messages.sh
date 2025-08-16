@@ -239,7 +239,7 @@ if [ "$GEMINI_WORKING_DIR" != "$(pwd)" ]; then
 fi
 
 # Export the variables to ensure they're passed to gemini
-export GEMINI_CODE_SSE_PORT=$PROXY_PORT
+export GEMINI_CLI_SSE_PORT=$PROXY_PORT
 export ENABLE_IDE_INTEGRATION=true
 export TERM_PROGRAM=vscode
 export FORCE_CODE_TERMINAL=true
