@@ -207,6 +207,15 @@ environments."
                  (const :tag "eat" eat))
   :group 'gemini-cli-ide)
 
+(defcustom gemini-cli-ide-prevent-reflow-glitch t
+  "Workaround for Claude Code terminal scrolling bug #1422.
+When non-nil (default), prevents the terminal from reflowing on height-only
+changes which can trigger uncontrollable scrolling in Claude Code.
+See: https://github.com/anthropics/claude-code/issues/1422
+This setting should be removed once the upstream bug is fixed."
+  :type 'boolean
+  :group 'gemini-cli-ide)
+
 (defcustom gemini-cli-ide-vterm-anti-flicker t
   "Enable intelligent flicker reduction for vterm display.
 When enabled, this feature optimizes terminal rendering by detecting
@@ -517,6 +526,11 @@ If DIRECTORY is not provided, use the current working directory."
 
 (defun gemini-cli-ide--get-process (&optional directory)
   "Get the Gemini CLI process for DIRECTORY or current working directory."
+  (when (and gemini-cli-ide-prevent-reflow-glitch
+             (= (hash-table-count gemini-cli-ide--processes) 0))
+    ;; Apply advice globally for the first session
+    (advice-add (gemini-cli-ide--terminal-resize-handler)
+                :around #'gemini-cli-ide--terminal-reflow-filter))
   (gethash (or directory (gemini-cli-ide--get-working-directory))
            gemini-cli-ide--processes))
 
@@ -592,7 +606,11 @@ If `gemini-cli-ide-focus-on-open' is non-nil, the window is selected."
           ;; Remove from process table
           (remhash directory gemini-cli-ide--processes)
           ;; Check if this was the last session
-
+          (when (and gemini-cli-ide-prevent-reflow-glitch
+                     (= (hash-table-count gemini-cli-ide--processes) 0))
+            ;; Remove advice globally when no sessions remain
+            (advice-remove (gemini-cli-ide--terminal-resize-handler)
+                           #'gemini-cli-ide--terminal-reflow-filter))
           ;; Remove vterm rendering optimization if no sessions remain
           (when (and (eq gemini-cli-ide-terminal-backend 'vterm)
                      gemini-cli-ide-vterm-anti-flicker
