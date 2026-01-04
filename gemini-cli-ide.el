@@ -706,27 +706,20 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
       (setq gemini-cmd (concat gemini-cmd " " gemini-cli-ide-cli-extra-flags)))
     ;; Add MCP tools config if enabled
     (when (gemini-cli-ide-mcp-server-ensure-server)
-      (when-let ((config (gemini-cli-ide-mcp-server-get-config session-id)))
-        (let ((json-str (json-encode config)))
-          (gemini-cli-ide-debug "MCP tools config JSON: %s" json-str)
-          ;; For vterm, we need to escape for sh -c context
-          ;; First escape backslashes, then quotes
-          (setq json-str (replace-regexp-in-string "\\\\" "\\\\\\\\" json-str))
-          (setq json-str (replace-regexp-in-string "\"" "\\\\\"" json-str))
-          (setq gemini-cmd (concat gemini-cmd " --mcp-config \"" json-str "\""))
-          ;; Add allowedTools flag if configured
-          (let ((allowed-tools
-                 (cond
-                  ;; Auto mode: get all emacs-tools names
-                  ((eq gemini-cli-ide-mcp-allowed-tools 'auto)
-                   (mapconcat 'identity (gemini-cli-ide-mcp-server-get-tool-names "mcp__emacs-tools__") " "))
-                  ;; List of specific tools
-                  ((listp gemini-cli-ide-mcp-allowed-tools)
-                   (mapconcat 'identity gemini-cli-ide-mcp-allowed-tools " "))
-                  ;; String pattern or nil
-                  (t gemini-cli-ide-mcp-allowed-tools))))
-            (when allowed-tools
-              (setq gemini-cmd (concat gemini-cmd " --allowedTools " allowed-tools)))))))
+      ;; The MCP config is now added using `gemini mcp add` when the session starts.
+      ;; We still add the --allowed-tools flag if it's configured.
+      (let ((allowed-tools
+             (cond
+              ;; Auto mode: get all emacs-tools names
+              ((eq gemini-cli-ide-mcp-allowed-tools 'auto)
+               (mapconcat 'identity (gemini-cli-ide-mcp-server-get-tool-names "mcp__emacs-tools__") " "))
+              ;; List of specific tools
+              ((listp gemini-cli-ide-mcp-allowed-tools)
+               (mapconcat 'identity gemini-cli-ide-mcp-allowed-tools " "))
+              ;; String pattern or nil
+              (t gemini-cli-ide-mcp-allowed-tools))))
+        (when allowed-tools
+          (setq gemini-cmd (concat gemini-cmd " --allowed-tools " (shell-quote-argument allowed-tools))))))
     gemini-cmd))
 
 (defun gemini-cli-ide--terminal-position-keeper (window-list)
@@ -884,6 +877,27 @@ This function handles:
             (progn
               ;; Start MCP server
               (setq port (gemini-cli-ide-mcp-start working-dir))
+              ;; Add MCP config via `gemini mcp add`
+              (let ((config (gemini-cli-ide-mcp-server-get-config session-id)))
+                (gemini-cli-ide-debug "MCP config for session %s: %s" session-id config)
+                (when config
+                  (let* ((default-directory working-dir) ; Run in project dir
+                         (mcp-servers (cdr (assoc 'mcpServers config)))
+                         (emacs-tools (cdr (assoc 'emacs-tools mcp-servers)))
+                         (mcp-url (cdr (assoc 'url emacs-tools))))
+                    (unless mcp-url
+                      (error "MCP config is present, but could not determine MCP URL from it: %s" config))
+                    (gemini-cli-ide-debug "Adding MCP for emacs_tools at URL: %s" mcp-url)
+                    (with-temp-buffer
+                      (let ((exit-code (call-process gemini-cli-ide-cli-path nil (current-buffer) t
+                                                     "mcp" "add"
+                                                     "--scope" "project"
+                                                     "--trust"
+                                                     "emacs_tools"
+                                                     mcp-url)))
+                        (unless (zerop exit-code)
+                          (error "Failed to add MCP 'emacs_tools'. Exit code: %d. Output: %s"
+                                 exit-code (buffer-string))))))))
               ;; Create new terminal session
               (let* ((buffer-and-process (gemini-cli-ide--create-terminal-session
                                           buffer-name working-dir port continue resume session-id))
