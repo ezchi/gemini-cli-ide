@@ -235,7 +235,8 @@ PARAMS is the parameters alist."
 
       ;; Call the function
       (condition-case err
-          (let ((result (apply tool-function args)))
+          (let ((result (with-timeout (30 (signal 'error '("Tool execution timed out")))
+                          (apply tool-function args))))
             `((content . (((type . "text")
                            (text . ,(gemini-cli-ide-mcp-http-server--format-result result)))))))
         (quit

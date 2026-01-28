@@ -207,8 +207,12 @@ Optional SESSION contains the MCP session context."
                       diagnostics-by-file)))))
       ;; Get diagnostics for all files in the session's project
       (let ((buffer-count 0)
-            (checked-count 0))
-        (dolist (buffer (buffer-list))
+            (checked-count 0)
+            (buffers (if (and project-dir (fboundp 'project-buffers))
+                         (let ((proj (project-current nil project-dir)))
+                           (if proj (project-buffers proj) (buffer-list)))
+                       (buffer-list))))
+        (dolist (buffer buffers)
           (when-let ((file (buffer-file-name buffer)))
             (setq buffer-count (1+ buffer-count))
             ;; Filter by project directory if session is available

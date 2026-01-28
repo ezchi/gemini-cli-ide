@@ -949,6 +949,8 @@ This function handles:
            ;; Terminal session creation failed - clean up MCP server
            (when port
              (gemini-cli-ide-mcp-stop-session working-dir))
+           ;; Notify MCP tools server that session ended (to decrement count)
+           (gemini-cli-ide-mcp-server-session-ended session-id)
            ;; Re-signal the error with improved message
            (signal (car err) (cdr err))))))))
 
