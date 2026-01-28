@@ -478,8 +478,7 @@ This function binds:
   "Filter terminal reflows to prevent height-only resize triggers.
 This wraps ORIGINAL-FN to suppress reflow signals unless the terminal
 width has actually changed, working around the scrolling glitch."
-  (let* ((base-result (apply original-fn args))
-         (dimensions-stable t))
+  (let ((dimensions-stable t))
     ;; Examine each window showing a Gemini session
     (dolist (win (window-list))
       (when-let* ((buf (window-buffer win))
@@ -494,13 +493,13 @@ width has actually changed, working around the scrolling glitch."
     (cond
      ;; Not in a Gemini buffer - pass through
      ((not (gemini-cli-ide--session-buffer-p (current-buffer)))
-      base-result)
+      (apply original-fn args))
      ;; In scroll mode - suppress reflow
      ((gemini-cli-ide--terminal-scroll-mode-active-p)
       nil)
      ;; Dimensions changed - allow reflow
      ((not dimensions-stable)
-      base-result)
+      (apply original-fn args))
      ;; No width change - suppress reflow
      (t nil))))
 
