@@ -689,7 +689,7 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
     (when continue
       (setq gemini-cmd (concat gemini-cmd " -c")))
     ;; Add append-system-prompt flag with Emacs context
-    (let ((emacs-prompt "IMPORTANT: Connected to Emacs via gemini-cli-ide.el integration. Emacs uses mixed coordinates: Lines: 1-based (line 1 = first line), Columns: 0-based (column 0 = first column). Example: First character in file is at line 1, column 0. Available: xref (LSP), tree-sitter, imenu, project.el, flycheck/flymake diagnostics. Context-aware with automatic project/file/selection tracking.")
+    (let ((emacs-prompt "IMPORTANT: Connected to Emacs via gemini-cli-ide.el integration. Emacs uses mixed coordinates: Lines: 1-based (line 1 = first line), Columns: 0-based (column 0 = first column). Example: First character in file is at line 1, column 0. Available: xref (LSP), tree-sitter, imenu, project.el, flycheck/flymake diagnostics. Context-aware with automatic project/file/selection tracking. If I ask for advice, decisions, plans, or reasoning, do not give generic advice. Always critique first, give concrete failure points and counterarguments, then suggest improvements.")
           (combined-prompt nil))
       ;; Always include the Emacs-specific prompt
       (setq combined-prompt emacs-prompt)
