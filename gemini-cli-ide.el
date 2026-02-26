@@ -706,26 +706,38 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
     ;; Add MCP tools config if enabled
     (when (gemini-cli-ide-mcp-server-ensure-server)
       (when-let ((config (gemini-cli-ide-mcp-server-get-config session-id)))
-        (let ((json-str (json-encode config)))
-          (gemini-cli-ide-debug "MCP tools config JSON: %s" json-str)
-          ;; For vterm, we need to escape for sh -c context
-          ;; First escape backslashes, then quotes
-          (setq json-str (replace-regexp-in-string "\\\\" "\\\\\\\\" json-str))
-          (setq json-str (replace-regexp-in-string "\"" "\\\\\"" json-str))
-          (setq gemini-cmd (concat gemini-cmd " --mcp-config \"" json-str "\""))
-          ;; Add allowedTools flag if configured
-          (let ((allowed-tools
-                 (cond
-                  ;; Auto mode: get all emacs-tools names
-                  ((eq gemini-cli-ide-mcp-allowed-tools 'auto)
-                   (mapconcat 'identity (gemini-cli-ide-mcp-server-get-tool-names "mcp__emacs-tools__") " "))
-                  ;; List of specific tools
-                  ((listp gemini-cli-ide-mcp-allowed-tools)
-                   (mapconcat 'identity gemini-cli-ide-mcp-allowed-tools " "))
-                  ;; String pattern or nil
-                  (t gemini-cli-ide-mcp-allowed-tools))))
-            (when allowed-tools
-              (setq gemini-cmd (concat gemini-cmd " --allowedTools " allowed-tools)))))))
+        (let* ((mcp-servers (cdr (assoc 'mcpServers config)))
+               (emacs-tools (cdr (assoc 'emacs-tools mcp-servers)))
+               (url (cdr (assoc 'url emacs-tools)))
+               (mcp-setup-cmd "")
+               ;; Build allowedTools flag if configured
+               (allowed-tools
+                (cond
+                 ;; Auto mode: get all emacs-tools names
+                 ((eq gemini-cli-ide-mcp-allowed-tools 'auto)
+                  (mapconcat 'identity (gemini-cli-ide-mcp-server-get-tool-names "mcp__emacs-tools__") ","))
+                 ;; List of specific tools
+                 ((listp gemini-cli-ide-mcp-allowed-tools)
+                  (mapconcat 'identity gemini-cli-ide-mcp-allowed-tools ","))
+                 ;; String pattern or nil
+                 (t gemini-cli-ide-mcp-allowed-tools))))
+
+          (gemini-cli-ide-debug "MCP tools URL: %s" url)
+
+          ;; Use gemini mcp remove/add instead of --mcp-config
+          (setq mcp-setup-cmd
+                (format "%s mcp remove emacs-tools --scope project > /dev/null 2>&1 || true; %s mcp add emacs-tools %s --type http --trust --scope project"
+                        gemini-cli-ide-cli-path
+                        gemini-cli-ide-cli-path
+                        (shell-quote-argument url)))
+
+          ;; Add include-tools if specified
+          (when allowed-tools
+            (setq mcp-setup-cmd
+                  (concat mcp-setup-cmd " --include-tools " (shell-quote-argument allowed-tools))))
+
+          ;; Prepend the setup command to the main command
+          (setq gemini-cmd (format "%s && %s --allowed-mcp-server-names emacs-tools" mcp-setup-cmd gemini-cmd)))))
     gemini-cmd))
 
 (defun gemini-cli-ide--terminal-position-keeper (window-list)
@@ -778,6 +790,7 @@ Signals an error if terminal fails to initialize."
   ;; Ensure terminal backend is available before proceeding
   (gemini-cli-ide--terminal-ensure-backend)
   (let* ((gemini-cmd (gemini-cli-ide--build-gemini-command continue resume session-id))
+         (shell-cmd (format "sh -c %s" (shell-quote-argument gemini-cmd)))
          (default-directory working-dir)
          (env-vars (list (format "GEMINI_CODE_SSE_PORT=%d" port)
                          "ENABLE_IDE_INTEGRATION=true"
@@ -794,8 +807,8 @@ Signals an error if terminal fails to initialize."
      ;; vterm backend
      ((eq gemini-cli-ide-terminal-backend 'vterm)
       (let* ((vterm-buffer-name buffer-name)
-             ;; Set vterm-shell to run Gemini directly
-             (vterm-shell gemini-cmd)
+             ;; Set vterm-shell to run Gemini directly via shell to support setup commands
+             (vterm-shell shell-cmd)
              ;; vterm uses vterm-environment for passing env vars
              (vterm-environment (append env-vars vterm-environment)))
         ;; Create vterm buffer without switching to it
@@ -821,7 +834,7 @@ Signals an error if terminal fails to initialize."
       (let* ((buffer (get-buffer-create buffer-name))
              (eat-term-name "xterm-256color")
              ;; Parse command string into program and args
-             (cmd-parts (gemini-cli-ide--parse-command-string gemini-cmd))
+             (cmd-parts (gemini-cli-ide--parse-command-string shell-cmd))
              (program (car cmd-parts))
              (args (cdr cmd-parts)))
         (with-current-buffer buffer
