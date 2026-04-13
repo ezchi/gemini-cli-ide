@@ -39,6 +39,7 @@
 (declare-function gemini-cli-ide-switch-to-buffer "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-insert-at-mentioned "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-send-prompt "gemini-cli-ide" ())
+(declare-function gemini-cli-ide-edit-prompt "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-send-escape "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-insert-newline "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-toggle "gemini-cli-ide" ())
@@ -321,6 +322,7 @@ Otherwise, if multiple sessions exist, prompt for selection."
    ["Interaction"
     ("i" "Insert selection" gemini-cli-ide-insert-at-mentioned)
     ("p" "Send prompt from minibuffer" gemini-cli-ide-send-prompt)
+    ("P" "Edit prompt in buffer" gemini-cli-ide-edit-prompt)
     ("e" "Send escape key" gemini-cli-ide-send-escape)
     ("n" "Insert newline" gemini-cli-ide-insert-newline)]
    ["Submenus"

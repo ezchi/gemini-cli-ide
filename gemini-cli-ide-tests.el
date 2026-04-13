@@ -135,6 +135,18 @@
   "Mock vterm-send-key function for testing."
   nil)
 
+(defun vterm-reset-cursor-point ()
+  "Mock vterm-reset-cursor-point function for testing."
+  nil)
+
+(defun vterm--get-prompt-point ()
+  "Mock vterm--get-prompt-point function for testing."
+  nil)
+
+(defun vterm--get-cursor-point ()
+  "Mock vterm--get-cursor-point function for testing."
+  nil)
+
 (provide 'vterm)
 
 ;; === Mock Emacs display functions ===
@@ -468,6 +480,226 @@ have completed before cleanup.  Waits up to 5 seconds."
           (should (null sent-string))
           (should (null sent-return)))))))
 
+(ert-deftest gemini-cli-ide-test-edit-prompt-command ()
+  "Test the `gemini-cli-ide-edit-prompt' command."
+  (let* ((working-dir (expand-file-name "/tmp/test-project"))
+         (buffer-name "*gemini-cli[test-project]*")
+         (test-buffer (get-buffer-create buffer-name))
+         (sent-string nil)
+         (sent-no-return nil)
+         (sent-clear-line nil))
+    (unwind-protect
+        (cl-letf* (((symbol-function 'gemini-cli-ide--get-working-directory)
+                    (lambda () working-dir))
+                   ((symbol-function 'gemini-cli-ide--get-buffer-name)
+                    (lambda () buffer-name))
+                   ((symbol-function 'gemini-cli-ide--get-terminal-input)
+                    (lambda (_) "existing input"))
+                   ((symbol-function 'gemini-cli-ide-send-prompt)
+                    (lambda (prompt &optional no-return clear-line)
+                      (setq sent-string prompt
+                            sent-no-return no-return
+                            sent-clear-line clear-line)))
+                   ((symbol-function 'pop-to-buffer) #'ignore)
+                   ((symbol-function 'display-buffer) #'ignore))
+          (gemini-cli-ide-edit-prompt)
+          (let ((prompt-buf (get-buffer "*Gemini Prompt [test-project]*")))
+            (should prompt-buf)
+            (with-current-buffer prompt-buf
+              (should (eq major-mode 'text-mode))
+              (should (equal (buffer-string) "existing input"))
+              (should (equal gemini-cli-ide--session-buffer test-buffer))
+              (erase-buffer)
+              (insert "updated input")
+              (gemini-cli-ide--apply-prompt-buffer))
+            (should (equal sent-string "updated input"))
+            (should sent-no-return)
+            (should sent-clear-line)
+            (should-not (buffer-live-p prompt-buf)))
+          (with-temp-buffer
+            (insert "region content")
+            (set-mark (point-min))
+            (goto-char (point-max))
+            (activate-mark)
+            (should (use-region-p))
+            (gemini-cli-ide-edit-prompt)
+            (let ((prompt-buf (get-buffer "*Gemini Prompt [test-project]*")))
+              (should prompt-buf)
+              (with-current-buffer prompt-buf
+                (should (equal (buffer-string) "region content"))
+                (kill-buffer))))
+          (gemini-cli-ide-edit-prompt)
+          (let ((prompt-buf (get-buffer "*Gemini Prompt [test-project]*")))
+            (should prompt-buf)
+            (with-current-buffer prompt-buf
+              (gemini-cli-ide--cancel-prompt-buffer))
+            (should-not (buffer-live-p prompt-buf))))
+      (when (buffer-live-p test-buffer)
+        (kill-buffer test-buffer)))))
+
+(ert-deftest gemini-cli-ide-test-get-terminal-input ()
+  "Test grabbing and stripping the Gemini terminal prompt."
+  (with-temp-buffer
+    (erase-buffer)
+    (insert "gemini > my input")
+    (should (equal (gemini-cli-ide--get-terminal-input (current-buffer)) "my input"))
+    (erase-buffer)
+    (insert "gemini > my input  \n\n")
+    (should (equal (gemini-cli-ide--get-terminal-input (current-buffer)) "my input"))
+    (erase-buffer)
+    (insert "╭─...─╮\n│ gemini > my input")
+    (should (equal (gemini-cli-ide--get-terminal-input (current-buffer)) "my input"))
+    (erase-buffer)
+    (insert "previous output\ngemini > current input")
+    (should (equal (gemini-cli-ide--get-terminal-input (current-buffer)) "current input"))
+    (erase-buffer)
+    (insert "> simple input")
+    (should (equal (gemini-cli-ide--get-terminal-input (current-buffer)) "simple input"))))
+
+(ert-deftest gemini-cli-ide-test-get-terminal-input-vterm-metadata ()
+  "Test grabbing terminal input from vterm prompt and cursor positions."
+  (with-temp-buffer
+    (insert "old output\n> live input")
+    (let ((prompt-end (save-excursion
+                        (goto-char (point-min))
+                        (search-forward "> ")))
+          (cursor (point-max)))
+      (cl-letf (((symbol-function 'derived-mode-p)
+                 (lambda (&rest modes) (memq 'vterm-mode modes)))
+                ((symbol-function 'vterm-reset-cursor-point) #'ignore)
+                ((symbol-function 'vterm--get-prompt-point)
+                 (lambda () prompt-end))
+                ((symbol-function 'vterm--get-cursor-point)
+                 (lambda () cursor)))
+        (should (equal (gemini-cli-ide--get-terminal-input (current-buffer))
+                       "live input"))))))
+
+(ert-deftest gemini-cli-ide-test-get-terminal-input-eat-metadata ()
+  "Test grabbing terminal input from Eat's active input region."
+  (with-temp-buffer
+    (insert "previous output\n> pending input")
+    (let ((eat-terminal 'mock-terminal)
+          (input-start (save-excursion
+                         (goto-char (point-min))
+                         (search-forward "\n"))))
+      (cl-letf (((symbol-function 'derived-mode-p)
+                 (lambda (&rest modes) (memq 'eat-mode modes)))
+                ((symbol-function 'eat-term-end)
+                 (lambda (_terminal) input-start)))
+        (should (equal (gemini-cli-ide--get-terminal-input (current-buffer))
+                       "pending input"))))))
+
+(ert-deftest gemini-cli-ide-test-strip-terminal-prompt-prefix-decorative-glyph ()
+  "Test stripping decorative shell prompt glyphs from captured input."
+  (should (equal (gemini-cli-ide--strip-terminal-prompt-prefix "❯\u00a0ihe some thing it ")
+                 "ihe some thing it "))
+  (should (equal (gemini-cli-ide--strip-terminal-prompt-prefix "$ test")
+                 "test")))
+
+(ert-deftest gemini-cli-ide-test-apply-prompt-buffer-restores-window-configuration ()
+  "Test finishing the prompt buffer restores the saved window configuration."
+  (let ((saved-config (current-window-configuration))
+        (restored-config nil)
+        (sent-string nil))
+    (with-temp-buffer
+      (setq-local gemini-cli-ide--session-buffer (get-buffer-create "*Gemini Prompt Session*"))
+      (setq-local gemini-cli-ide--saved-window-configuration saved-config)
+      (insert "updated input")
+      (cl-letf (((symbol-function 'set-window-configuration)
+                 (lambda (config) (setq restored-config config)))
+                ((symbol-function 'gemini-cli-ide-send-prompt)
+                 (lambda (prompt &optional _no-return _clear-line)
+                   (setq sent-string prompt))))
+        (gemini-cli-ide--apply-prompt-buffer)))
+    (should (eq restored-config saved-config))
+    (should (equal sent-string "updated input"))))
+
+(ert-deftest gemini-cli-ide-test-cancel-prompt-buffer-restores-window-configuration ()
+  "Test cancelling the prompt buffer restores the saved window configuration."
+  (let ((saved-config (current-window-configuration))
+        (restored-config nil))
+    (with-temp-buffer
+      (setq-local gemini-cli-ide--saved-window-configuration saved-config)
+      (cl-letf (((symbol-function 'set-window-configuration)
+                 (lambda (config) (setq restored-config config))))
+        (gemini-cli-ide--cancel-prompt-buffer)))
+    (should (eq restored-config saved-config))))
+
+(ert-deftest gemini-cli-ide-test-at-mentioned-completion ()
+  "Test @ completion in the prompt buffer."
+  (let* ((working-dir (expand-file-name "/tmp/test-project"))
+         (mock-project (list 'project working-dir))
+         (mock-files (list (expand-file-name "file1.txt" working-dir)
+                           (expand-file-name "dir/file2.py" working-dir))))
+    (with-temp-buffer
+      (setq-local default-directory working-dir)
+      (cl-letf* (((symbol-function 'project-current) (lambda (&rest _) mock-project))
+                 ((symbol-function 'project-files) (lambda (&rest _) mock-files)))
+        (erase-buffer)
+        (insert "@")
+        (let ((result (gemini-cli-ide--at-mentioned-completion-at-point)))
+          (should result)
+          (should (equal (nth 0 result) 2))
+          (should (equal (nth 1 result) 2))
+          (should (equal (try-completion "" (nth 2 result)) ""))
+          (should (equal (test-completion "file1.txt" (nth 2 result)) t))
+          (should (equal (test-completion "dir/file2.py" (nth 2 result)) t)))
+        (erase-buffer)
+        (insert "Some text @f")
+        (let ((result (gemini-cli-ide--at-mentioned-completion-at-point)))
+          (should result)
+          (should (equal (nth 0 result) 12))
+          (should (equal (nth 1 result) 13))
+          (should (equal (test-completion "file1.txt" (nth 2 result)) t)))
+        (erase-buffer)
+        (insert "Just some text")
+        (should-not (gemini-cli-ide--at-mentioned-completion-at-point))))))
+
+(ert-deftest gemini-cli-ide-test-at-mentioned-completion-home-path ()
+  "Test @ completion switches to filesystem completion for ~/ paths."
+  (with-temp-buffer
+    (insert "@~/Do")
+    (let ((result (gemini-cli-ide--at-mentioned-completion-at-point))
+          (called-with nil))
+      (should result)
+      (cl-letf (((symbol-function 'completion-file-name-table)
+                 (lambda (string pred action)
+                   (setq called-with (list string pred action))
+                   (complete-with-action action '("~/Documents/" "~/Downloads/") string pred))))
+        (should (equal (try-completion "~/Do" (nth 2 result)) "~/Do"))
+        (should (equal (all-completions "~/Do" (nth 2 result))
+                       '("~/Documents/" "~/Downloads/"))))
+      (should (equal (car called-with) "~/Do")))))
+
+(ert-deftest gemini-cli-ide-test-filesystem-path-mention-p ()
+  "Test filesystem path mention detection."
+  (should (gemini-cli-ide--filesystem-path-mention-p "~/src"))
+  (should (gemini-cli-ide--filesystem-path-mention-p "/tmp"))
+  (should (gemini-cli-ide--filesystem-path-mention-p "./foo"))
+  (should (gemini-cli-ide--filesystem-path-mention-p "../foo"))
+  (should-not (gemini-cli-ide--filesystem-path-mention-p "foo/bar")))
+
+(ert-deftest gemini-cli-ide-test-at-mentioned-bounds ()
+  "Test @ mention bounds detection."
+  (with-temp-buffer
+    (insert "before @dir/file after")
+    (goto-char 17)
+    (should (equal (gemini-cli-ide--at-mentioned-bounds) '(9 . 17)))
+    (goto-char (point-max))
+    (should-not (gemini-cli-ide--at-mentioned-bounds))))
+
+(ert-deftest gemini-cli-ide-test-prompt-buffer-post-self-insert-triggers-completion ()
+  "Test @ mention typing triggers completion."
+  (with-temp-buffer
+    (insert "@f")
+    (let ((this-command 'self-insert-command)
+          (last-command-event ?f)
+          (called nil))
+      (cl-letf (((symbol-function 'completion-at-point)
+                 (lambda () (setq called t))))
+        (gemini-cli-ide--prompt-buffer-post-self-insert))
+      (should called))))
+
 (ert-deftest gemini-cli-ide-test-terminal-session-creation ()
   "Test terminal session creation with both backends."
   (let ((mock-vterm-buffer nil)
@@ -505,12 +737,29 @@ have completed before cleanup.  Waits up to 5 seconds."
             (gemini-cli-ide--cli-available t))
         (cl-letf (((symbol-function 'gemini-cli-ide--build-gemini-command)
                    (lambda (&rest _) "gemini")))
-          (let ((result (gemini-cli-ide--create-terminal-session
+      (let ((result (gemini-cli-ide--create-terminal-session
                          "*test-eat*" "/tmp" 12345 nil nil "test-session")))
             (should (consp result))
             (should (bufferp (car result)))
             (should (processp (cdr result)))
             (should (bufferp mock-eat-buffer))))))))
+
+(ert-deftest gemini-cli-ide-test-setup-terminal-keybindings ()
+  "Test terminal keybindings include prompt buffer binding."
+  (with-temp-buffer
+    (let ((gemini-cli-ide-terminal-backend 'vterm))
+      (gemini-cli-ide--setup-terminal-keybindings)
+      (should (eq (local-key-binding (kbd "C-'"))
+                  #'gemini-cli-ide-edit-prompt))
+      (should (eq (local-key-binding (kbd "C-<escape>"))
+                  #'gemini-cli-ide-send-escape))))
+  (with-temp-buffer
+    (let ((gemini-cli-ide-terminal-backend 'eat))
+      (gemini-cli-ide--setup-terminal-keybindings)
+      (should (eq (local-key-binding (kbd "C-'"))
+                  #'gemini-cli-ide-edit-prompt))
+      (should (eq (local-key-binding (kbd "C-<escape>"))
+                  #'gemini-cli-ide-send-escape)))))
 
 (ert-deftest gemini-cli-ide-test-vterm-smart-renderer-passthrough ()
   "Test that vterm smart renderer passes through normal text immediately."
