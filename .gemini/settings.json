@@ -21,5 +21,15 @@
         ]
       }
     ]
+  },
+  "mcpServers": {
+    "emacs-tools": {
+      "url": "http://localhost:65306/mcp/gemini-gemini-cli-ide-20260413-214810",
+      "type": "http",
+      "trust": true,
+      "includeTools": [
+        "mcp__emacs-tools__gemini-cli-ide-mcp-treesit-info,mcp__emacs-tools__gemini-cli-ide-mcp-imenu-list-symbols,mcp__emacs-tools__gemini-cli-ide-mcp-project-info,mcp__emacs-tools__gemini-cli-ide-mcp-xref-find-apropos,mcp__emacs-tools__gemini-cli-ide-mcp-xref-find-references"
+      ]
+    }
   }
 }

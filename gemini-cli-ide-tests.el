@@ -509,6 +509,10 @@ have completed before cleanup.  Waits up to 5 seconds."
               (should (eq major-mode 'text-mode))
               (should (equal (buffer-string) "existing input"))
               (should (equal gemini-cli-ide--session-buffer test-buffer))
+              (should (eq (local-key-binding (kbd "C-c C-c"))
+                          #'gemini-cli-ide--apply-prompt-buffer))
+              (should (eq (local-key-binding (kbd "C-c C-k"))
+                          #'gemini-cli-ide--cancel-prompt-buffer))
               (erase-buffer)
               (insert "updated input")
               (gemini-cli-ide--apply-prompt-buffer))
@@ -577,15 +581,18 @@ have completed before cleanup.  Waits up to 5 seconds."
 (ert-deftest gemini-cli-ide-test-get-terminal-input-eat-metadata ()
   "Test grabbing terminal input from Eat's active input region."
   (with-temp-buffer
-    (insert "previous output\n> pending input")
+    (insert "previous output\n> pending input\n▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n workspace (/directory)")
     (let ((eat-terminal 'mock-terminal)
           (input-start (save-excursion
                          (goto-char (point-min))
-                         (search-forward "\n"))))
+                         (search-forward "\n")))
+          (cursor (point-max)))
       (cl-letf (((symbol-function 'derived-mode-p)
                  (lambda (&rest modes) (memq 'eat-mode modes)))
                 ((symbol-function 'eat-term-end)
-                 (lambda (_terminal) input-start)))
+                 (lambda (_terminal) input-start))
+                ((symbol-function 'eat-term-display-cursor)
+                 (lambda (_terminal) cursor)))
         (should (equal (gemini-cli-ide--get-terminal-input (current-buffer))
                        "pending input"))))))
 
@@ -613,6 +620,23 @@ have completed before cleanup.  Waits up to 5 seconds."
         (gemini-cli-ide--apply-prompt-buffer)))
     (should (eq restored-config saved-config))
     (should (equal sent-string "updated input"))))
+
+(ert-deftest gemini-cli-ide-test-apply-empty-prompt-buffer-clears-terminal ()
+  "Test applying an empty prompt buffer still clears the terminal prompt."
+  (let ((sent-prompt :unset)
+        (sent-no-return nil)
+        (sent-clear-line nil))
+    (with-temp-buffer
+      (setq-local gemini-cli-ide--session-buffer (get-buffer-create "*Gemini Prompt Session*"))
+      (cl-letf (((symbol-function 'gemini-cli-ide-send-prompt)
+                 (lambda (prompt &optional no-return clear-line)
+                   (setq sent-prompt prompt
+                         sent-no-return no-return
+                         sent-clear-line clear-line))))
+        (gemini-cli-ide--apply-prompt-buffer)))
+    (should (equal sent-prompt ""))
+    (should sent-no-return)
+    (should sent-clear-line)))
 
 (ert-deftest gemini-cli-ide-test-cancel-prompt-buffer-restores-window-configuration ()
   "Test cancelling the prompt buffer restores the saved window configuration."
@@ -749,14 +773,14 @@ have completed before cleanup.  Waits up to 5 seconds."
   (with-temp-buffer
     (let ((gemini-cli-ide-terminal-backend 'vterm))
       (gemini-cli-ide--setup-terminal-keybindings)
-      (should (eq (local-key-binding (kbd "C-'"))
+      (should (eq (local-key-binding (kbd "C-c '"))
                   #'gemini-cli-ide-edit-prompt))
       (should (eq (local-key-binding (kbd "C-<escape>"))
                   #'gemini-cli-ide-send-escape))))
   (with-temp-buffer
     (let ((gemini-cli-ide-terminal-backend 'eat))
       (gemini-cli-ide--setup-terminal-keybindings)
-      (should (eq (local-key-binding (kbd "C-'"))
+      (should (eq (local-key-binding (kbd "C-c '"))
                   #'gemini-cli-ide-edit-prompt))
       (should (eq (local-key-binding (kbd "C-<escape>"))
                   #'gemini-cli-ide-send-escape)))))

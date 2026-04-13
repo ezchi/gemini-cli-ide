@@ -456,19 +456,19 @@ cursor management, and process buffering for superior user experience."
 This function binds:
 - M-RET (Alt-Return) to insert a newline
 - C-<escape> to send escape
-- C-' to open the prompt buffer"
+- C-c ' to open the prompt buffer"
   (cond
    ((eq gemini-cli-ide-terminal-backend 'vterm)
     ;; For vterm, we set up local keybindings in vterm-mode-map
     (local-set-key (kbd "S-<return>") #'gemini-cli-ide-insert-newline)
     (local-set-key (kbd "C-<escape>") #'gemini-cli-ide-send-escape)
-    (local-set-key (kbd "C-'") #'gemini-cli-ide-edit-prompt))
+    (local-set-key (kbd "C-c '") #'gemini-cli-ide-edit-prompt))
    ((eq gemini-cli-ide-terminal-backend 'eat)
     ;; For eat, we need to modify the semi-char mode map which is the default
     ;; We use local-set-key to make it buffer-local
     (local-set-key (kbd "S-<return>") #'gemini-cli-ide-insert-newline)
     (local-set-key (kbd "C-<escape>") #'gemini-cli-ide-send-escape)
-    (local-set-key (kbd "C-'") #'gemini-cli-ide-edit-prompt))
+    (local-set-key (kbd "C-c '") #'gemini-cli-ide-edit-prompt))
    (t
     (error "Unknown terminal backend: %s" gemini-cli-ide-terminal-backend))))
 
@@ -1139,14 +1139,15 @@ If CLEAR-LINE is non-nil, send C-u to clear the current line first."
   (let ((buffer-name (gemini-cli-ide--get-buffer-name)))
     (if-let ((buffer (get-buffer buffer-name)))
         (let ((prompt-to-send (or prompt (read-string "Gemini prompt: "))))
-          (when (not (string-empty-p prompt-to-send))
+          (when (or clear-line (not (string-empty-p prompt-to-send)))
             (with-current-buffer buffer
               (when clear-line
                 (if (eq gemini-cli-ide-terminal-backend 'vterm)
                     (vterm-send-key "u" nil nil t)
                   (gemini-cli-ide--terminal-send-string "\C-u"))
                 (sit-for 0.1))
-              (gemini-cli-ide--terminal-send-string prompt-to-send)
+              (unless (string-empty-p prompt-to-send)
+                (gemini-cli-ide--terminal-send-string prompt-to-send))
               (unless no-return
                 (sit-for 0.1)
                 (gemini-cli-ide--terminal-send-return)))
@@ -1187,16 +1188,11 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
         (erase-buffer)
         (when (and initial-input (not (string-empty-p initial-input)))
           (insert (string-trim initial-input)))
-        (if (fboundp 'with-editor-mode)
-            (progn
-              (with-editor-mode 1)
-              (setq-local with-editor-show-usage nil)
-              (setq-local with-editor-finish-query-functions nil)
-              (add-hook 'with-editor-finish-hook #'gemini-cli-ide--apply-prompt-buffer nil t)
-              (add-hook 'with-editor-cancel-hook #'gemini-cli-ide--cancel-prompt-buffer nil t))
-          (use-local-map (copy-keymap text-mode-map))
-          (local-set-key (kbd "C-c C-c") #'gemini-cli-ide--apply-prompt-buffer)
-          (local-set-key (kbd "C-c C-k") #'gemini-cli-ide--cancel-prompt-buffer))
+        ;; Use an explicit local keymap so C-c C-c always applies the prompt
+        ;; instead of invoking editor/file-saving workflows.
+        (use-local-map (copy-keymap text-mode-map))
+        (local-set-key (kbd "C-c C-c") #'gemini-cli-ide--apply-prompt-buffer)
+        (local-set-key (kbd "C-c C-k") #'gemini-cli-ide--cancel-prompt-buffer)
         (message "Type your prompt and press C-c C-c to update, or C-c C-k to cancel."))
       (pop-to-buffer prompt-buffer))))
 
@@ -1212,7 +1208,7 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
       (set-window-configuration window-config))
     (when (buffer-live-p prompt-buffer)
       (kill-buffer prompt-buffer))
-    (when (and target-buffer (buffer-live-p target-buffer) (not (string-empty-p (string-trim prompt))))
+    (when (and target-buffer (buffer-live-p target-buffer))
       (gemini-cli-ide-send-prompt (string-trim prompt) t t))))
 
 (defun gemini-cli-ide--get-terminal-input (buffer)
@@ -1223,7 +1219,8 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
                   (or (gemini-cli-ide--get-terminal-input-from-vterm)
                       (gemini-cli-ide--get-terminal-input-from-eat)
                       (gemini-cli-ide--get-terminal-input-from-text))))
-        (gemini-cli-ide--strip-terminal-prompt-prefix input)))))
+        (gemini-cli-ide--strip-terminal-ui-suffix
+         (gemini-cli-ide--strip-terminal-prompt-prefix input))))))
 
 (defun gemini-cli-ide--strip-terminal-prompt-prefix (input)
   "Strip a visible Gemini prompt prefix from INPUT."
@@ -1234,6 +1231,12 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
      ((string-match "\\`[[:space:]\u00a0]*[^[:alnum:]_[:space:]\u00a0]\\{1,3\\}[[:space:]\u00a0]+" stripped)
       (substring stripped (match-end 0)))
      (t stripped))))
+
+(defun gemini-cli-ide--strip-terminal-ui-suffix (input)
+  "Strip Gemini TUI footer/status content from INPUT."
+  (if (string-match "\n[▄▀━─_-]\\{10,\\}\\(?:.\\|\n\\)*\\'" input)
+      (substring input 0 (match-beginning 0))
+    input))
 
 (defun gemini-cli-ide--get-terminal-input-from-vterm ()
   "Read the active command buffer contents from the current vterm buffer."
@@ -1252,12 +1255,12 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
 
 (defun gemini-cli-ide--get-terminal-input-from-eat ()
   "Read the active command buffer contents from the current Eat buffer."
-  (when (and (derived-mode-p 'eat-mode)
-             (boundp 'eat-terminal)
+  (when (and (boundp 'eat-terminal)
              eat-terminal
-             (fboundp 'eat-term-end))
+             (fboundp 'eat-term-end)
+             (fboundp 'eat-term-display-cursor))
     (let ((input-start (eat-term-end eat-terminal))
-          (input-end (point-max)))
+          (input-end (eat-term-display-cursor eat-terminal)))
       (when (and (integer-or-marker-p input-start)
                  (integer-or-marker-p input-end)
                  (<= input-start input-end))
