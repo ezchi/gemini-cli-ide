@@ -3,7 +3,7 @@
 ;; Copyright (C) 2025
 
 ;; Author: Enze Chi
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "28.1") (websocket "1.12") (transient "0.9.0") (web-server "0.1.2"))
 ;; Keywords: ai, gemini, cli, assistant, mcp, websocket
 ;; URL: https://github.com/ezchi/gemini-cli-ide.el
