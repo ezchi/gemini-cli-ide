@@ -47,6 +47,22 @@ This package starts a WebSocket server that Gemini CLI connects to, enabling rea
 - `M-x gemini-cli-ide-check-status` - Check CLI availability and version
 - `M-x gemini-cli-ide-insert-at-mentioned` - Send selected text to Gemini
 
+## Prompt Buffer
+
+The prompt buffer provides a full Emacs buffer for composing complex prompts with the following features:
+
+- **Rich Editing:** Use all your favorite Emacs editing commands to draft your prompt.
+- **@ Mentions:** Type `@` to trigger fuzzy completion for files and project symbols.
+- **Multi-line Support:** Easily compose long, multi-line instructions.
+
+### Keybindings
+
+| Key | Action |
+|-----|--------|
+| `C-c '` | Open prompt buffer (from Gemini terminal) |
+| `C-c C-c` | Apply prompt and send to Gemini |
+| `C-c C-k` | Cancel and close prompt buffer |
+
 ## License
 
 GPL-3.0-or-later
