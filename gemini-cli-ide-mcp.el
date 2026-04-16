@@ -131,7 +131,7 @@ Uses buffer-local cache to avoid repeated project lookups."
       ;; Cache is valid, return cached value
       gemini-cli-ide-mcp--buffer-project-cache
     ;; Cache is invalid or doesn't exist, recalculate
-    (let ((project-dir (when-let ((project (project-current)))
+    (let ((project-dir (when-let* ((project (project-current)))
                          (expand-file-name (project-root project)))))
       ;; Update cache
       (setq gemini-cli-ide-mcp--buffer-project-cache project-dir
@@ -149,7 +149,7 @@ Returns the session structure if found, nil otherwise."
 This is a convenience function that combines
 `gemini-cli-ide-mcp--get-buffer-project' and
 `gemini-cli-ide-mcp--get-session-for-project'."
-  (when-let ((project-dir (gemini-cli-ide-mcp--get-buffer-project)))
+  (when-let* ((project-dir (gemini-cli-ide-mcp--get-buffer-project)))
     (gemini-cli-ide-mcp--get-session-for-project project-dir)))
 
 (defun gemini-cli-ide-mcp--find-session-by-websocket (ws)
@@ -272,7 +272,7 @@ Returns the session if found, nil otherwise."
                     (serverInfo . ((name . "gemini-cli-ide-mcp")
                                    (version . "0.1.0"))))))
     (gemini-cli-ide-debug "Initialize response capabilities: tools.listChanged=%s, resources.subscribe=%s, resources.listChanged=%s, prompts.listChanged=%s"
-                           t :json-false :json-false t)
+                          t :json-false :json-false t)
     (gemini-cli-ide-mcp--make-response id response)))
 
 (defun gemini-cli-ide-mcp--prepare-schema-for-json (schema)
@@ -302,7 +302,7 @@ turn into {}. Recursively processes nested structures."
   (setq gemini-cli-ide-mcp-tool-descriptions (gemini-cli-ide-mcp--build-tool-descriptions))
   ;; Ensure handlers are loaded
   (gemini-cli-ide-debug "Building tools list from %d registered tools"
-                         (length gemini-cli-ide-mcp-tools))
+                        (length gemini-cli-ide-mcp-tools))
   (let ((tools '()))
     (dolist (tool-entry gemini-cli-ide-mcp-tools)
       (let* ((name (car tool-entry))
@@ -310,9 +310,9 @@ turn into {}. Recursively processes nested structures."
              (prepared-schema (gemini-cli-ide-mcp--prepare-schema-for-json schema))
              (description (alist-get name gemini-cli-ide-mcp-tool-descriptions nil nil #'string=)))
         (gemini-cli-ide-debug "  Tool: %s (has schema: %s, has description: %s)"
-                               name
-                               (if schema "yes" "no")
-                               (if description "yes" "no"))
+                              name
+                              (if schema "yes" "no")
+                              (if description "yes" "no"))
         (push `((name . ,name)
                 (description . ,description)
                 (inputSchema . ,prepared-schema))
@@ -361,7 +361,7 @@ Optional SESSION contains the MCP session context."
                             (let ((session-deferred (gemini-cli-ide-mcp-session-deferred session)))
                               (puthash storage-key id session-deferred)
                               (gemini-cli-ide-debug "Stored deferred response in session for %s"
-                                                     (gemini-cli-ide-mcp-session-project-dir session)))
+                                                    (gemini-cli-ide-mcp-session-project-dir session)))
                           (gemini-cli-ide-debug "Warning: No session found, cannot store deferred response")))
                       ;; Don't send a response yet
                       nil)
@@ -387,8 +387,8 @@ Optional SESSION contains the MCP session context."
   "Handle incoming JSON-RPC MESSAGE from SESSION."
   (when message
     (gemini-cli-ide-debug "Processing message with method: %s, id: %s"
-                           (alist-get 'method message)
-                           (alist-get 'id message))
+                          (alist-get 'method message)
+                          (alist-get 'id message))
     (let* ((method (alist-get 'method message))
            (id (alist-get 'id message))
            (params (alist-get 'params message))
@@ -533,8 +533,8 @@ Optional SESSION contains the MCP session context."
           ;; Update session with client
           (setf (gemini-cli-ide-mcp-session-client session) ws)
           (gemini-cli-ide-debug "Gemini Cli connected to MCP server for %s"
-                                 (file-name-nondirectory
-                                  (directory-file-name (gemini-cli-ide-mcp-session-project-dir session))))
+                                (file-name-nondirectory
+                                 (directory-file-name (gemini-cli-ide-mcp-session-project-dir session))))
 
           ;; Send initial active editor notification if we have one in the project
           (let ((file-path (buffer-file-name))
@@ -545,11 +545,11 @@ Optional SESSION contains the MCP session context."
                                         (expand-file-name file-path)))
               (setf (gemini-cli-ide-mcp-session-last-buffer session) (current-buffer))
               ;; Update MCP tools server's last active buffer
-              (when-let ((session-id (gethash project-dir gemini-cli-ide--session-ids)))
+              (when-let* ((session-id (gethash project-dir gemini-cli-ide--session-ids)))
                 (gemini-cli-ide-mcp-server-update-last-active-buffer session-id (current-buffer)))
               (run-at-time gemini-cli-ide-mcp-initial-notification-delay nil
                            (lambda ()
-                             (when-let ((s (gethash project-dir gemini-cli-ide-mcp--sessions)))
+                             (when-let* ((s (gethash project-dir gemini-cli-ide-mcp--sessions)))
                                (let ((file-path (buffer-file-name)))
                                  (gemini-cli-ide-mcp--send-notification
                                   "workspace/didChangeActiveEditor"
@@ -617,8 +617,8 @@ Optional SESSION contains the MCP session context."
       (gemini-cli-ide-mcp--stop-ping-timer session)
       (gemini-cli-ide-debug "Final WebSocket state: %s" (websocket-ready-state ws))
       (gemini-cli-ide-debug "Gemini Cli disconnected from MCP server for %s"
-                             (file-name-nondirectory
-                              (directory-file-name (gemini-cli-ide-mcp-session-project-dir session)))))))
+                            (file-name-nondirectory
+                             (directory-file-name (gemini-cli-ide-mcp-session-project-dir session)))))))
 
 (defun gemini-cli-ide-mcp--on-ping (_ws _frame)
   "Handle WebSocket ping from WS in FRAME."
@@ -638,13 +638,13 @@ Optional SESSION contains the MCP session context."
 
 (defun gemini-cli-ide-mcp--stop-ping-timer (session)
   "Stop the ping timer for SESSION."
-  (when-let ((timer (gemini-cli-ide-mcp-session-ping-timer session)))
+  (when-let* ((timer (gemini-cli-ide-mcp-session-ping-timer session)))
     (cancel-timer timer)
     (setf (gemini-cli-ide-mcp-session-ping-timer session) nil)))
 
 (defun gemini-cli-ide-mcp--send-ping (session)
   "Send a ping frame to keep connection alive for SESSION."
-  (when-let ((client (gemini-cli-ide-mcp-session-client session)))
+  (when-let* ((client (gemini-cli-ide-mcp-session-client session)))
     (condition-case err
         (websocket-send client
                         (make-websocket-frame :opcode 'ping
@@ -690,7 +690,7 @@ This should be called when the buffer's context might have changed."
       ;; Only proceed if we have a session
       (when session
         ;; Cancel any existing timer for this session
-        (when-let ((timer (gemini-cli-ide-mcp-session-selection-timer session)))
+        (when-let* ((timer (gemini-cli-ide-mcp-session-selection-timer session)))
           (cancel-timer timer))
         ;; Set new timer for this session
         (let ((project-dir (gemini-cli-ide-mcp-session-project-dir session)))
@@ -701,7 +701,7 @@ This should be called when the buffer's context might have changed."
 
 (defun gemini-cli-ide-mcp--send-selection-for-project (project-dir)
   "Send current selection to Gemini for PROJECT-DIR."
-  (when-let ((session (gemini-cli-ide-mcp--get-session-for-project project-dir)))
+  (when-let* ((session (gemini-cli-ide-mcp--get-session-for-project project-dir)))
     ;; Clear the timer in the session
     (setf (gemini-cli-ide-mcp-session-selection-timer session) nil)
 
@@ -767,7 +767,7 @@ This should be called when the buffer's context might have changed."
                                         (expand-file-name file-path)))
               (setf (gemini-cli-ide-mcp-session-last-buffer session) current-buffer)
               ;; Update MCP tools server's last active buffer
-              (when-let ((session-id (gethash project-dir gemini-cli-ide--session-ids)))
+              (when-let* ((session-id (gethash project-dir gemini-cli-ide--session-ids)))
                 (gemini-cli-ide-mcp-server-update-last-active-buffer session-id current-buffer))
               ;; Send notification
               (gemini-cli-ide-mcp--send-notification
@@ -819,26 +819,26 @@ This should be called when the buffer's context might have changed."
 
         (gemini-cli-ide-debug "MCP server ready on port %d" port)
         (gemini-cli-ide-debug "MCP server started on port %d for %s" port
-                               (file-name-nondirectory (directory-file-name project-dir)))
+                              (file-name-nondirectory (directory-file-name project-dir)))
         port))))
 
 (defun gemini-cli-ide-mcp-stop-session (project-dir)
   "Stop the MCP session for PROJECT-DIR."
-  (when-let ((session (gethash project-dir gemini-cli-ide-mcp--sessions)))
+  (when-let* ((session (gethash project-dir gemini-cli-ide-mcp--sessions)))
     (gemini-cli-ide-debug "Stopping MCP session for %s" project-dir)
 
     ;; Close server and client
-    (when-let ((server (gemini-cli-ide-mcp-session-server session)))
+    (when-let* ((server (gemini-cli-ide-mcp-session-server session)))
       (websocket-server-close server))
 
     ;; Stop timers
-    (when-let ((ping-timer (gemini-cli-ide-mcp-session-ping-timer session)))
+    (when-let* ((ping-timer (gemini-cli-ide-mcp-session-ping-timer session)))
       (cancel-timer ping-timer))
-    (when-let ((sel-timer (gemini-cli-ide-mcp-session-selection-timer session)))
+    (when-let* ((sel-timer (gemini-cli-ide-mcp-session-selection-timer session)))
       (cancel-timer sel-timer))
 
     ;; Remove lockfile
-    (when-let ((port (gemini-cli-ide-mcp-session-port session)))
+    (when-let* ((port (gemini-cli-ide-mcp-session-port session)))
       (gemini-cli-ide-debug "Removing lockfile for port %d" port)
       (gemini-cli-ide-mcp--remove-lockfile port))
 
@@ -858,7 +858,7 @@ This should be called when the buffer's context might have changed."
       (remove-hook 'post-command-hook #'gemini-cli-ide-mcp--track-active-buffer))
 
     (gemini-cli-ide-debug "MCP server stopped for %s"
-                           (file-name-nondirectory (directory-file-name project-dir)))))
+                          (file-name-nondirectory (directory-file-name project-dir)))))
 
 (defun gemini-cli-ide-mcp-stop ()
   "Stop the MCP server for the current project or directory."
@@ -906,7 +906,7 @@ responses."
         (if id
             (let ((client (gemini-cli-ide-mcp-session-client session)))
               (gemini-cli-ide-debug "Found deferred response id %s in session for %s"
-                                     id (gemini-cli-ide-mcp-session-project-dir session))
+                                    id (gemini-cli-ide-mcp-session-project-dir session))
               (remhash lookup-key session-deferred)
               (if client
                   (let* ((response (gemini-cli-ide-mcp--make-response id `((content . ,result))))

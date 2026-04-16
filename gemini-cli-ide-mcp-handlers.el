@@ -51,6 +51,7 @@
 (defvar gemini-cli-ide-show-gemini-window-in-ediff)
 (defvar gemini-cli-ide-focus-gemini-after-ediff)
 (defvar gemini-cli-ide-use-ide-diff)
+(defvar gemini-cli-ide-switch-tab-on-ediff)
 
 ;;; Tool Registry - Define variables first to ensure they're available
 
@@ -100,7 +101,7 @@ Returns the window if found, nil otherwise."
 If SESSION is provided, use it instead of looking up the current session."
   (if session
       (gemini-cli-ide-mcp-session-active-diffs session)
-    (if-let ((current-session (gemini-cli-ide-mcp--get-current-session)))
+    (if-let* ((current-session (gemini-cli-ide-mcp--get-current-session)))
         (gemini-cli-ide-mcp-session-active-diffs current-session)
       ;; No session found - return nil
       nil)))
@@ -135,7 +136,7 @@ Returns a cons cell (buffer-A . buffer-B)."
             (error
              ;; If mode activation fails (e.g., syntax errors), use fundamental-mode
              (gemini-cli-ide-debug "Failed to activate %s for diff buffer: %s. Using fundamental-mode."
-                                    mode (error-message-string err))
+                                   mode (error-message-string err))
              (fundamental-mode))))))
 
     (cons buffer-A buffer-B)))
@@ -171,7 +172,7 @@ STARTUP-HOOK-FN is the hook function to remove after use."
     ;; Store the control buffer in our diff-info
     (let ((active-diffs (gemini-cli-ide-mcp--get-active-diffs session))
           (control-buffer ediff-control-buffer))
-      (when-let ((diff-info (gethash tab-name active-diffs)))
+      (when-let* ((diff-info (gethash tab-name active-diffs)))
         (setf (alist-get 'control-buffer diff-info) control-buffer)
         (puthash tab-name diff-info active-diffs)))
 
@@ -329,7 +330,7 @@ ARGUMENTS should contain:
   (let ((editors '())
         (project-dir (gemini-cli-ide-mcp--get-buffer-project)))
     (dolist (buffer (buffer-list))
-      (when-let ((file (buffer-file-name buffer)))
+      (when-let* ((file (buffer-file-name buffer)))
         ;; Only include files within the project directory
         (when (or (not project-dir)
                   (string-prefix-p (expand-file-name project-dir)
@@ -407,7 +408,7 @@ ARGUMENTS should contain `path' or `tab_name' of the file to close."
         (if found-diff-info
             (progn
               ;; Check if ediff is still active and quit it using stored control buffer
-              (when-let ((control-buf (alist-get 'control-buffer found-diff-info)))
+              (when-let* ((control-buf (alist-get 'control-buffer found-diff-info)))
                 (when (buffer-live-p control-buf)
                   ;; Set a flag in diff-info to indicate this quit is from Gemini
                   (setf (alist-get 'quit-from-gemini found-diff-info) t)
@@ -434,7 +435,7 @@ ARGUMENTS should contain `path' or `tab_name' of the file to close."
                      ;; If ediff-really-quit fails (e.g., side window issues),
                      ;; just kill the control buffer directly
                      (gemini-cli-ide-debug "Error quitting ediff: %s. Killing control buffer directly."
-                                            (error-message-string err))
+                                           (error-message-string err))
                      (when (buffer-live-p control-buf)
                        (kill-buffer control-buf))))))
 
@@ -485,23 +486,25 @@ ARGUMENTS should contain:
     ;; Get the active diffs for this specific session
     (let ((active-diffs (gemini-cli-ide-mcp--get-active-diffs session)))
       ;; Check if there's already a diff with this tab_name
-      (when-let ((existing-diff (gethash tab-name active-diffs)))
+      (when-let* ((existing-diff (gethash tab-name active-diffs)))
         ;; Clean up existing diff
         (gemini-cli-ide-mcp--cleanup-diff tab-name session)))
 
-    ;; Switch to original tab if we're on a different one
-    (when-let ((original-tab (gemini-cli-ide-mcp-session-original-tab session)))
-      (when (and (fboundp 'tab-bar-mode)
-                 tab-bar-mode
-                 (fboundp 'tab-bar--current-tab)
-                 (fboundp 'tab-bar-select-tab-by-name))
-        (let ((current-tab (tab-bar--current-tab)))
-          ;; Compare tab names or indices
-          (when (and original-tab current-tab
-                     (not (equal (alist-get 'name original-tab)
-                                 (alist-get 'name current-tab))))
-            ;; Switch to the original tab
-            (tab-bar-select-tab-by-name (alist-get 'name original-tab))))))
+    ;; Switch to original tab if we're on a different one (when configured)
+    (when (and gemini-cli-ide-switch-tab-on-ediff
+               (gemini-cli-ide-mcp-session-original-tab session))
+      (let ((original-tab (gemini-cli-ide-mcp-session-original-tab session)))
+        (when (and (fboundp 'tab-bar-mode)
+                   tab-bar-mode
+                   (fboundp 'tab-bar--current-tab)
+                   (fboundp 'tab-bar-select-tab-by-name))
+          (let ((current-tab (tab-bar--current-tab)))
+            ;; Compare tab names or indices
+            (when (and original-tab current-tab
+                       (not (equal (alist-get 'name original-tab)
+                                   (alist-get 'name current-tab))))
+              ;; Switch to the original tab
+              (tab-bar-select-tab-by-name (alist-get 'name original-tab)))))))
 
     ;; Save current window configuration
     (let* ((saved-winconf (current-window-configuration))
@@ -642,7 +645,7 @@ session."
   "Clean up diff session for TAB-NAME.
 SESSION is the MCP session to use - if not provided, tries to determine it."
   (let ((active-diffs (gemini-cli-ide-mcp--get-active-diffs session)))
-    (when-let ((diff-info (gethash tab-name active-diffs)))
+    (when-let* ((diff-info (gethash tab-name active-diffs)))
       ;; If session wasn't provided, try to get it from diff-info
       (unless session
         (setq session (alist-get 'session diff-info)))
@@ -697,9 +700,9 @@ SESSION is the MCP session to use - if not provided, tries to determine it."
                      (setq closed-count (1+ closed-count)))
                    session-diffs))
       ;; Fallback to project directory if no current session
-      (when-let ((project-dir (gemini-cli-ide-mcp--get-buffer-project)))
-        (when-let ((session (gemini-cli-ide-mcp--get-session-for-project
-                             project-dir)))
+      (when-let* ((project-dir (gemini-cli-ide-mcp--get-buffer-project)))
+        (when-let* ((session (gemini-cli-ide-mcp--get-session-for-project
+                              project-dir)))
           (let ((session-diffs (gemini-cli-ide-mcp-session-active-diffs session)))
             (maphash (lambda (tab-name _diff-info)
                        (gemini-cli-ide-mcp--cleanup-diff tab-name session)

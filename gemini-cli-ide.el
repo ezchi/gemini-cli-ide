@@ -201,6 +201,13 @@ display diffs in the terminal instead."
   :type 'boolean
   :group 'gemini-cli-ide)
 
+(defcustom gemini-cli-ide-switch-tab-on-ediff t
+  "Whether to switch back to the original tab after closing ediff.
+When non-nil (default), Emacs will switch back to the tab where
+Gemini was originally opened after the ediff session is finished."
+  :type 'boolean
+  :group 'gemini-cli-ide)
+
 (defcustom gemini-cli-ide-use-side-window t
   "Whether to display Gemini CLI in a side window.
 When non-nil (default), Gemini CLI opens in a dedicated side window
@@ -1358,6 +1365,30 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
     (if buffer
         (gemini-cli-ide--toggle-existing-window buffer working-dir)
       (user-error "No Gemini CLI session for this project"))))
+
+;;;###autoload
+(defun gemini-cli-ide-toggle-recent ()
+  "Toggle visibility of the most recently used Gemini CLI window."
+  (interactive)
+  (gemini-cli-ide--cleanup-dead-processes)
+  (let ((recent-buffer
+         (cl-find-if (lambda (buf)
+                       (and (gemini-cli-ide--session-buffer-p buf)
+                            (get-buffer-process buf)
+                            (process-live-p (get-buffer-process buf))))
+                     (buffer-list))))
+    (if recent-buffer
+        (let* ((process (get-buffer-process recent-buffer))
+               (directory (let (found)
+                            (maphash (lambda (dir proc)
+                                       (when (eq proc process)
+                                         (setq found dir)))
+                                     gemini-cli-ide--processes)
+                            found)))
+          (gemini-cli-ide--toggle-existing-window
+           recent-buffer
+           (or directory (buffer-local-value 'default-directory recent-buffer))))
+      (user-error "No active Gemini CLI sessions found"))))
 
 (provide 'gemini-cli-ide)
 

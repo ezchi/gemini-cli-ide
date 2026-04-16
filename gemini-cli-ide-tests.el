@@ -761,7 +761,7 @@ have completed before cleanup.  Waits up to 5 seconds."
             (gemini-cli-ide--cli-available t))
         (cl-letf (((symbol-function 'gemini-cli-ide--build-gemini-command)
                    (lambda (&rest _) "gemini")))
-      (let ((result (gemini-cli-ide--create-terminal-session
+          (let ((result (gemini-cli-ide--create-terminal-session
                          "*test-eat*" "/tmp" 12345 nil nil "test-session")))
             (should (consp result))
             (should (bufferp (car result)))
@@ -1245,29 +1245,29 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test the openFile tool implementation."
   ;; Test successful file open
   (gemini-cli-ide-mcp-tests--with-temp-file test-file "Line 1\nLine 2\nLine 3\nLine 4"
-                                             (let ((result (gemini-cli-ide-mcp-handle-open-file `((path . ,test-file)))))
-                                               ;; Handler returns VS Code format
-                                               (should (listp result))
-                                               (let ((first-item (car result)))
-                                                 (should (equal (alist-get 'type first-item) "text"))
-                                                 (should (equal (alist-get 'text first-item) "FILE_OPENED")))
-                                               (should (equal (buffer-file-name) test-file))
-                                               (kill-buffer)))
+                                            (let ((result (gemini-cli-ide-mcp-handle-open-file `((path . ,test-file)))))
+                                              ;; Handler returns VS Code format
+                                              (should (listp result))
+                                              (let ((first-item (car result)))
+                                                (should (equal (alist-get 'type first-item) "text"))
+                                                (should (equal (alist-get 'text first-item) "FILE_OPENED")))
+                                              (should (equal (buffer-file-name) test-file))
+                                              (kill-buffer)))
 
   ;; Test with selection
   (gemini-cli-ide-mcp-tests--with-temp-file test-file "Line 1\nLine 2\nLine 3\nLine 4"
-                                             (let ((result (gemini-cli-ide-mcp-handle-open-file
-                                                            `((path . ,test-file)
-                                                              (startLine . 2)
-                                                              (endLine . 3)))))
-                                               ;; Handler returns VS Code format
-                                               (should (listp result))
-                                               (let ((first-item (car result)))
-                                                 (should (equal (alist-get 'type first-item) "text"))
-                                                 (should (equal (alist-get 'text first-item) "FILE_OPENED")))
-                                               (should (use-region-p))
-                                               (should (= (line-number-at-pos (region-beginning)) 2))
-                                               (kill-buffer)))
+                                            (let ((result (gemini-cli-ide-mcp-handle-open-file
+                                                           `((path . ,test-file)
+                                                             (startLine . 2)
+                                                             (endLine . 3)))))
+                                              ;; Handler returns VS Code format
+                                              (should (listp result))
+                                              (let ((first-item (car result)))
+                                                (should (equal (alist-get 'type first-item) "text"))
+                                                (should (equal (alist-get 'text first-item) "FILE_OPENED")))
+                                              (should (use-region-p))
+                                              (should (= (line-number-at-pos (region-beginning)) 2))
+                                              (kill-buffer)))
 
   ;; Test missing path parameter
   (should-error (gemini-cli-ide-mcp-handle-open-file '())
@@ -1277,30 +1277,30 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test the getCurrentSelection tool implementation."
   ;; Test with active selection
   (gemini-cli-ide-mcp-tests--with-temp-buffer "Line 1\nLine 2\nLine 3"
-                                               (goto-char (point-min))
-                                               (set-mark (point))
-                                               (forward-line 2)
-                                               ;; Ensure transient-mark-mode is on and region is active
-                                               (let ((transient-mark-mode t))
-                                                 (activate-mark)
-                                                 (let ((result (gemini-cli-ide-mcp-handle-get-current-selection nil)))
-                                                   (should (equal (alist-get 'text result) "Line 1\nLine 2\n"))
-                                                   ;; Check the selection structure
-                                                   (let ((selection (alist-get 'selection result)))
-                                                     (should selection)
-                                                     (let ((start (alist-get 'start selection))
-                                                           (end (alist-get 'end selection)))
-                                                       (should (= (alist-get 'line start) 1))  ; 1-based
-                                                       (should (= (alist-get 'line end) 3)))))))  ; 1-based
+                                              (goto-char (point-min))
+                                              (set-mark (point))
+                                              (forward-line 2)
+                                              ;; Ensure transient-mark-mode is on and region is active
+                                              (let ((transient-mark-mode t))
+                                                (activate-mark)
+                                                (let ((result (gemini-cli-ide-mcp-handle-get-current-selection nil)))
+                                                  (should (equal (alist-get 'text result) "Line 1\nLine 2\n"))
+                                                  ;; Check the selection structure
+                                                  (let ((selection (alist-get 'selection result)))
+                                                    (should selection)
+                                                    (let ((start (alist-get 'start selection))
+                                                          (end (alist-get 'end selection)))
+                                                      (should (= (alist-get 'line start) 1))  ; 1-based
+                                                      (should (= (alist-get 'line end) 3)))))))  ; 1-based
 
   ;; Test without selection
   (gemini-cli-ide-mcp-tests--with-temp-buffer "Test"
-                                               (let ((result (gemini-cli-ide-mcp-handle-get-current-selection nil)))
-                                                 (should (equal (alist-get 'text result) ""))
-                                                 ;; When no selection, we should get the selection structure
-                                                 (let ((selection (alist-get 'selection result)))
-                                                   (should selection)
-                                                   (should (alist-get 'isEmpty selection))))))
+                                              (let ((result (gemini-cli-ide-mcp-handle-get-current-selection nil)))
+                                                (should (equal (alist-get 'text result) ""))
+                                                ;; When no selection, we should get the selection structure
+                                                (let ((selection (alist-get 'selection result)))
+                                                  (should selection)
+                                                  (should (alist-get 'isEmpty selection))))))
 
 (ert-deftest gemini-cli-ide-test-mcp-get-open-editors ()
   "Test the getOpenEditors tool implementation."
@@ -1342,19 +1342,19 @@ have completed before cleanup.  Waits up to 5 seconds."
 (ert-deftest gemini-cli-ide-test-mcp-save-document ()
   "Test the saveDocument tool implementation."
   (gemini-cli-ide-mcp-tests--with-temp-file test-file "Initial content"
-                                             (with-current-buffer (find-file-noselect test-file)
-                                               ;; Modify buffer
-                                               (goto-char (point-max))
-                                               (insert "\nNew line")
-                                               ;; Save using tool
-                                               (let ((result (gemini-cli-ide-mcp-handle-save-document `((path . ,test-file)))))
-                                                 ;; Handler returns VS Code format
-                                                 (should (listp result))
-                                                 (let ((first-item (car result)))
-                                                   (should (equal (alist-get 'type first-item) "text"))
-                                                   (should (equal (alist-get 'text first-item) "DOCUMENT_SAVED")))
-                                                 (should-not (buffer-modified-p)))
-                                               (kill-buffer)))
+                                            (with-current-buffer (find-file-noselect test-file)
+                                              ;; Modify buffer
+                                              (goto-char (point-max))
+                                              (insert "\nNew line")
+                                              ;; Save using tool
+                                              (let ((result (gemini-cli-ide-mcp-handle-save-document `((path . ,test-file)))))
+                                                ;; Handler returns VS Code format
+                                                (should (listp result))
+                                                (let ((first-item (car result)))
+                                                  (should (equal (alist-get 'type first-item) "text"))
+                                                  (should (equal (alist-get 'text first-item) "DOCUMENT_SAVED")))
+                                                (should-not (buffer-modified-p)))
+                                              (kill-buffer)))
 
   ;; Test missing path
   (should-error (gemini-cli-ide-mcp-handle-save-document '())
@@ -1363,15 +1363,15 @@ have completed before cleanup.  Waits up to 5 seconds."
 (ert-deftest gemini-cli-ide-test-mcp-close-tab ()
   "Test the close_tab tool implementation."
   (gemini-cli-ide-mcp-tests--with-temp-file test-file "Content"
-                                             (find-file-noselect test-file)
-                                             ;; Close using tool
-                                             (let ((result (gemini-cli-ide-mcp-handle-close-tab `((path . ,test-file)))))
-                                               ;; Handler returns VS Code format
-                                               (should (listp result))
-                                               (let ((first-item (car result)))
-                                                 (should (equal (alist-get 'type first-item) "text"))
-                                                 (should (equal (alist-get 'text first-item) "TAB_CLOSED")))
-                                               (should-not (find-buffer-visiting test-file))))
+                                            (find-file-noselect test-file)
+                                            ;; Close using tool
+                                            (let ((result (gemini-cli-ide-mcp-handle-close-tab `((path . ,test-file)))))
+                                              ;; Handler returns VS Code format
+                                              (should (listp result))
+                                              (let ((first-item (car result)))
+                                                (should (equal (alist-get 'type first-item) "text"))
+                                                (should (equal (alist-get 'text first-item) "TAB_CLOSED")))
+                                              (should-not (find-buffer-visiting test-file))))
 
   ;; Test non-existent buffer - should throw an error
   (should-error (gemini-cli-ide-mcp-handle-close-tab '((path . "/nonexistent/file")))
@@ -1754,7 +1754,7 @@ have completed before cleanup.  Waits up to 5 seconds."
            (setq gemini-window-displayed nil)
            ;; Call the startup handler
            (gemini-cli-ide-mcp--handle-ediff-startup "test-diff" session nil
-                                                      (lambda () nil))
+                                                     (lambda () nil))
            ;; Should display Gemini window
            (should gemini-window-displayed))
 
@@ -1764,7 +1764,7 @@ have completed before cleanup.  Waits up to 5 seconds."
            (setq gemini-window-displayed nil)
            ;; Call the startup handler
            (gemini-cli-ide-mcp--handle-ediff-startup "test-diff" session nil
-                                                      (lambda () nil))
+                                                     (lambda () nil))
            ;; Should NOT display Gemini window
            (should-not gemini-window-displayed))
 
@@ -1897,15 +1897,15 @@ have completed before cleanup.  Waits up to 5 seconds."
 
             ;; Complete deferred response for session A
             (gemini-cli-ide-mcp-complete-deferred session-a
-                                                   "openDiff"
-                                                   '(((type . "text") (text . "FILE_SAVED")))
-                                                   "diff1")
+                                                  "openDiff"
+                                                  '(((type . "text") (text . "FILE_SAVED")))
+                                                  "diff1")
 
             ;; Complete deferred response for session B
             (gemini-cli-ide-mcp-complete-deferred session-b
-                                                   "openDiff"
-                                                   '(((type . "text") (text . "DIFF_REJECTED")))
-                                                   "diff2")
+                                                  "openDiff"
+                                                  '(((type . "text") (text . "DIFF_REJECTED")))
+                                                  "diff2")
 
             ;; Verify both responses were sent
             (should (= (length sent-responses) 2))
@@ -1992,8 +1992,8 @@ have completed before cleanup.  Waits up to 5 seconds."
                (lambda (feature &optional _filename _noerror)
                  (cond ((eq feature 'gemini-cli-ide-mcp-http-server) nil)
                        ((memq feature '(gemini-cli-ide-mcp-server websocket vterm flycheck
-                                                                   gemini-cli-ide-debug gemini-cli-ide-mcp-handlers
-                                                                   gemini-cli-ide transient)) nil)
+                                                                  gemini-cli-ide-debug gemini-cli-ide-mcp-handlers
+                                                                  gemini-cli-ide transient)) nil)
                        (t (funcall (cl-letf-saved-symbol-function 'require) feature _filename _noerror))))))
       ;; First session should start the server
       (gemini-cli-ide-mcp-server-session-started)

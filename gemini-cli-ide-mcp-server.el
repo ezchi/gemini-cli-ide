@@ -216,11 +216,11 @@ Returns a list of plists with :name, :type, :description, :optional."
                 (unless required
                   (setq arg (plist-put arg :optional t)))
                 ;; Handle additional properties
-                (when-let ((enum (plist-get param :enum)))
+                (when-let* ((enum (plist-get param :enum)))
                   (setq arg (plist-put arg :enum enum)))
-                (when-let ((items (plist-get param :items)))
+                (when-let* ((items (plist-get param :items)))
                   (setq arg (plist-put arg :items items)))
-                (when-let ((properties (plist-get param :properties)))
+                (when-let* ((properties (plist-get param :properties)))
                   (setq arg (plist-put arg :properties properties)))
                 arg)))
           parameters))
@@ -252,7 +252,7 @@ If SESSION-ID, PROJECT-DIR and BUFFER are provided, register the session.
 Increments the session counter."
   (cl-incf gemini-cli-ide-mcp-server--session-count)
   (gemini-cli-ide-debug "MCP session started. Count: %d"
-                         gemini-cli-ide-mcp-server--session-count)
+                        gemini-cli-ide-mcp-server--session-count)
   (when (and session-id project-dir buffer)
     (gemini-cli-ide-mcp-server-register-session session-id project-dir buffer)))
 
@@ -265,7 +265,7 @@ Decrements the session counter and stops server if no sessions remain."
   (when (> gemini-cli-ide-mcp-server--session-count 0)
     (cl-decf gemini-cli-ide-mcp-server--session-count)
     (gemini-cli-ide-debug "MCP session ended. Count: %d"
-                           gemini-cli-ide-mcp-server--session-count)
+                          gemini-cli-ide-mcp-server--session-count)
     (when (= gemini-cli-ide-mcp-server--session-count 0)
       (gemini-cli-ide-mcp-server--stop-server))))
 
@@ -273,7 +273,7 @@ Decrements the session counter and stops server if no sessions remain."
   "Get the MCP configuration for the tools server.
 If SESSION-ID is provided, includes it in the URL path.
 Returns an alist suitable for JSON encoding."
-  (when-let ((port (gemini-cli-ide-mcp-server-get-port)))
+  (when-let* ((port (gemini-cli-ide-mcp-server-get-port)))
     (let* ((path (if session-id
                      (format "/mcp/%s" session-id)
                    "/mcp"))
@@ -324,10 +324,10 @@ Returns a plist with :project-dir and :buffer, or nil if not found."
   "Update the last active buffer for SESSION-ID to BUFFER.
 This should be called when the user switches to a different buffer
 in the project to ensure MCP tools execute in the correct context."
-  (when-let ((session (gethash session-id gemini-cli-ide-mcp-server--sessions)))
+  (when-let* ((session (gethash session-id gemini-cli-ide-mcp-server--sessions)))
     (plist-put session :last-active-buffer buffer)
     (gemini-cli-ide-debug "Updated last active buffer for session %s to %s"
-                           session-id (buffer-name buffer))))
+                          session-id (buffer-name buffer))))
 
 (defmacro gemini-cli-ide-mcp-server-with-session-context (session-id &rest body)
   "Execute BODY with the context of SESSION-ID.
@@ -381,7 +381,7 @@ Prefers the last active buffer over the registered buffer."
           gemini-cli-ide-mcp-server--port))
     (error
      (gemini-cli-ide-debug "Failed to start MCP server: %s"
-                            (error-message-string err))
+                           (error-message-string err))
      (message "Warning: Failed to start MCP server: %s"
               (error-message-string err))
      nil)))
@@ -399,7 +399,7 @@ Prefers the last active buffer over the registered buffer."
           (gemini-cli-ide-debug "MCP server stopped"))
       (error
        (gemini-cli-ide-debug "Error stopping MCP server: %s"
-                              (error-message-string err))))))
+                             (error-message-string err))))))
 
 (provide 'gemini-cli-ide-mcp-server)
 ;;; gemini-cli-ide-mcp-server.el ends here

@@ -140,7 +140,7 @@ with the appropriate session context."
              (id (alist-get 'id json-object)))
 
         (gemini-cli-ide-debug "MCP request - method: %s, id: %s, session-id: %s"
-                               method id url-session-id)
+                              method id url-session-id)
 
         ;; Check if this is a notification (no id field)
         (if (null id)
@@ -172,7 +172,7 @@ with the appropriate session context."
 
     (error
      (gemini-cli-ide-debug "Error handling request: %s"
-                            (error-message-string err))
+                           (error-message-string err))
      (gemini-cli-ide-mcp-http-server--send-json-error
       request nil -32603 (format "Internal error: %s" (error-message-string err))))))
 

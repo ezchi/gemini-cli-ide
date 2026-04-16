@@ -43,6 +43,7 @@
 (declare-function gemini-cli-ide-send-escape "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-insert-newline "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-toggle "gemini-cli-ide" ())
+(declare-function gemini-cli-ide-toggle-recent "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-check-status "gemini-cli-ide" ())
 (declare-function gemini-cli-ide--ensure-cli "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-mcp--active-sessions "gemini-cli-ide-mcp" ())
@@ -64,6 +65,7 @@
 (defvar gemini-cli-ide-focus-gemini-after-ediff)
 (defvar gemini-cli-ide-show-gemini-window-in-ediff)
 (defvar gemini-cli-ide-use-ide-diff)
+(defvar gemini-cli-ide-switch-tab-on-ediff)
 (defvar gemini-cli-ide-use-side-window)
 (defvar gemini-cli-ide-cli-debug)
 (defvar gemini-cli-ide-cli-extra-flags)
@@ -88,7 +90,7 @@
   (if (gemini-cli-ide--has-active-session-p)
       (let ((working-dir (gemini-cli-ide--get-working-directory)))
         (gemini-cli-ide-log "Gemin Cli session already running in %s"
-                             (abbreviate-file-name working-dir)))
+                            (abbreviate-file-name working-dir)))
     (gemini-cli-ide)))
 
 (defun gemini-cli-ide--continue-description ()
@@ -104,7 +106,7 @@
   (if (gemini-cli-ide--has-active-session-p)
       (let ((working-dir (gemini-cli-ide--get-working-directory)))
         (gemini-cli-ide-log "Gemin Cli session already running in %s"
-                             (abbreviate-file-name working-dir)))
+                            (abbreviate-file-name working-dir)))
     (gemini-cli-ide-continue)))
 
 (defun gemini-cli-ide--resume-description ()
@@ -120,12 +122,12 @@
   (if (gemini-cli-ide--has-active-session-p)
       (let ((working-dir (gemini-cli-ide--get-working-directory)))
         (gemini-cli-ide-log "Gemin Cli session already running in %s"
-                             (abbreviate-file-name working-dir)))
+                            (abbreviate-file-name working-dir)))
     (gemini-cli-ide-resume)))
 
 (defun gemini-cli-ide--session-status ()
   "Return a string describing the current session status."
-  (if-let ((session (gemini-cli-ide-mcp--get-current-session)))
+  (if-let* ((session (gemini-cli-ide-mcp--get-current-session)))
       (let* ((project-dir (gemini-cli-ide-mcp-session-project-dir session))
              (project-name (file-name-nondirectory (directory-file-name project-dir)))
              (connected (if (gemini-cli-ide-mcp-session-client session) "connected" "disconnected")))
@@ -245,9 +247,9 @@ Otherwise, if multiple sessions exist, prompt for selection."
                        (read-string "System prompt: "))))
   (setq gemini-cli-ide-system-prompt (if (string-empty-p prompt) nil prompt))
   (gemini-cli-ide-log "System prompt %s"
-                       (if gemini-cli-ide-system-prompt
-                           (format "set to: %s" gemini-cli-ide-system-prompt)
-                         "disabled")))
+                      (if gemini-cli-ide-system-prompt
+                          (format "set to: %s" gemini-cli-ide-system-prompt)
+                        "disabled")))
 
 ;;; Transient Suffix Functions
 
@@ -281,6 +283,12 @@ Otherwise, if multiple sessions exist, prompt for selection."
   (setq gemini-cli-ide-use-ide-diff (not gemini-cli-ide-use-ide-diff))
   (gemini-cli-ide-log "IDE diff viewer %s" (if gemini-cli-ide-use-ide-diff "enabled" "disabled")))
 
+(transient-define-suffix gemini-cli-ide--toggle-switch-tab-on-ediff ()
+  "Toggle tab switching on ediff setting."
+  (interactive)
+  (setq gemini-cli-ide-switch-tab-on-ediff (not gemini-cli-ide-switch-tab-on-ediff))
+  (gemini-cli-ide-log "Switch tab on ediff %s" (if gemini-cli-ide-switch-tab-on-ediff "enabled" "disabled")))
+
 (transient-define-suffix gemini-cli-ide--toggle-cli-debug ()
   "Toggle CLI debug mode."
   (interactive)
@@ -297,6 +305,7 @@ Otherwise, if multiple sessions exist, prompt for selection."
   (customize-save-variable 'gemini-cli-ide-focus-gemini-after-ediff gemini-cli-ide-focus-gemini-after-ediff)
   (customize-save-variable 'gemini-cli-ide-show-gemini-window-in-ediff gemini-cli-ide-show-gemini-window-in-ediff)
   (customize-save-variable 'gemini-cli-ide-use-ide-diff gemini-cli-ide-use-ide-diff)
+  (customize-save-variable 'gemini-cli-ide-switch-tab-on-ediff gemini-cli-ide-switch-tab-on-ediff)
   (customize-save-variable 'gemini-cli-ide-use-side-window gemini-cli-ide-use-side-window)
   (customize-save-variable 'gemini-cli-ide-cli-path gemini-cli-ide-cli-path)
   (customize-save-variable 'gemini-cli-ide-cli-extra-flags gemini-cli-ide-cli-extra-flags)
@@ -318,7 +327,8 @@ Otherwise, if multiple sessions exist, prompt for selection."
     ("l" "List all sessions" gemini-cli-ide-list-sessions)]
    ["Navigation"
     ("b" "Switch to Gemini buffer" gemini-cli-ide-switch-to-buffer)
-    ("w" "Toggle window visibility" gemini-cli-ide-toggle-window)]
+    ("w" "Toggle window visibility" gemini-cli-ide-toggle-window)
+    ("W" "Toggle recent window" gemini-cli-ide-toggle-recent)]
    ["Interaction"
     ("i" "Insert selection" gemini-cli-ide-insert-at-mentioned)
     ("p" "Send prompt from minibuffer" gemini-cli-ide-send-prompt)
@@ -348,6 +358,9 @@ Otherwise, if multiple sessions exist, prompt for selection."
     ("i" "Toggle IDE diff viewer" gemini-cli-ide--toggle-use-ide-diff
      :description (lambda () (format "IDE diff viewer (%s)"
                                      (if gemini-cli-ide-use-ide-diff "ON" "OFF"))))
+    ("t" "Toggle tab switching on ediff" gemini-cli-ide--toggle-switch-tab-on-ediff
+     :description (lambda () (format "Tab switch on ediff (%s)"
+                                     (if gemini-cli-ide-switch-tab-on-ediff "ON" "OFF"))))
     ("u" "Toggle side window" gemini-cli-ide--toggle-use-side-window
      :description (lambda () (format "Use side window (%s)"
                                      (if gemini-cli-ide-use-side-window "ON" "OFF"))))]
