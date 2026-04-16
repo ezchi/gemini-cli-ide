@@ -1124,44 +1124,28 @@ have completed before cleanup.  Waits up to 5 seconds."
     (should (string-match "-d.*-r" (gemini-cli-ide--build-gemini-command nil t)))))
 
 (ert-deftest gemini-cli-ide-test-build-command-with-system-prompt ()
-  "Test building command with append-system-prompt flag."
+  "Test building command with append-system-prompt flag (currently disabled)."
   ;; Test with user system prompt
   (let ((gemini-cli-ide-cli-path "gemini")
         (gemini-cli-ide-system-prompt "You are a helpful assistant")
         (gemini-cli-ide-cli-debug nil)
         (gemini-cli-ide-cli-extra-flags ""))
     (let ((cmd (gemini-cli-ide--build-gemini-command)))
-      (should (string-match-p "--prompt" cmd))
-      ;; Check that Emacs prompt is included (accounting for shell escaping)
-      (should (or (string-match-p "Connected to Emacs" cmd)
-                  (string-match-p "Connected\\\\ to\\\\ Emacs" cmd)))
-      ;; Check that user prompt is included
-      (should (or (string-match-p "You are a helpful assistant" cmd)
-                  (string-match-p "You\\\\ are\\\\ a\\\\ helpful\\\\ assistant" cmd)))))
-  ;; Test with nil value (should still add the Emacs prompt)
+      (should-not (string-match-p "--prompt" cmd))))
+  ;; Test with nil value (should still NOT add the Emacs prompt as it's disabled)
   (let ((gemini-cli-ide-cli-path "gemini")
         (gemini-cli-ide-system-prompt nil)
         (gemini-cli-ide-cli-debug nil)
         (gemini-cli-ide-cli-extra-flags ""))
     (let ((cmd (gemini-cli-ide--build-gemini-command)))
-      (should (string-match-p "--prompt" cmd))
-      ;; Check that Emacs prompt is included (accounting for shell escaping)
-      (should (or (string-match-p "Connected to Emacs" cmd)
-                  (string-match-p "Connected\\\\ to\\\\ Emacs" cmd)))
-      ;; Should not contain user prompt when nil
-      (should-not (string-match-p "You are a helpful assistant" cmd))))
+      (should-not (string-match-p "--prompt" cmd))))
   ;; Test with special characters that need quoting
   (let ((gemini-cli-ide-cli-path "gemini")
         (gemini-cli-ide-system-prompt "You're a \"helpful\" assistant!")
         (gemini-cli-ide-cli-debug nil)
         (gemini-cli-ide-cli-extra-flags ""))
     (let ((cmd (gemini-cli-ide--build-gemini-command)))
-      (should (string-match-p "--prompt" cmd))
-      ;; Check that Emacs prompt is included (accounting for shell escaping)
-      (should (or (string-match-p "Connected to Emacs" cmd)
-                  (string-match-p "Connected\\\\ to\\\\ Emacs" cmd)))
-      ;; The command should contain the escaped version (shell-quote-argument escapes quotes and apostrophes)
-      (should (string-match-p "You\\\\'re\\\\ a\\\\ \\\\\"helpful\\\\\"\\\\ assistant\\\\!" cmd)))))
+      (should-not (string-match-p "--prompt" cmd)))))
 
 (ert-deftest gemini-cli-ide-test-error-handling ()
   "Test error handling in various scenarios."
