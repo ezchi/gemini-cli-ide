@@ -729,9 +729,8 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
       (when gemini-cli-ide-system-prompt
         (setq combined-prompt (concat combined-prompt "\n\n" gemini-cli-ide-system-prompt)))
       ;; Add the combined prompt to the command
-      ;; (setq gemini-cmd (concat gemini-cmd " --prompt-interactive "
-      ;;                          (shell-quote-argument combined-prompt)))
-      )
+      (setq gemini-cmd (concat gemini-cmd " --prompt "
+                               (shell-quote-argument combined-prompt))))
     ;; Add any extra flags
     (when (and gemini-cli-ide-cli-extra-flags
                (not (string-empty-p gemini-cli-ide-cli-extra-flags)))
@@ -1242,9 +1241,13 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
 
 (defun gemini-cli-ide--strip-terminal-ui-suffix (input)
   "Strip Gemini TUI footer/status content from INPUT."
-  (if (string-match "\n[▄▀━─_-]\\{10,\\}\\(?:.\\|\n\\)*\\'" input)
-      (substring input 0 (match-beginning 0))
-    input))
+  (let ((result (if (string-match "\n[▄▀━─_-╰╯╭╮│┃ ]\\{10,\\}\\(?:.\\|\n\\)*\\'" input)
+                    (substring input 0 (match-beginning 0))
+                  input)))
+    ;; Also handle case where there's a lot of whitespace and then a TUI-like footer
+    (if (string-match "\n\n+[[:space:]\u00a0]*\\(?:\\? for shortcuts\\|workspace (.*)\\)\\'" result)
+        (substring result 0 (match-beginning 0))
+      (string-trim-right result))))
 
 (defun gemini-cli-ide--get-terminal-input-from-vterm ()
   "Read the active command buffer contents from the current vterm buffer."

@@ -596,10 +596,19 @@ have completed before cleanup.  Waits up to 5 seconds."
         (should (equal (gemini-cli-ide--get-terminal-input (current-buffer))
                        "pending input"))))))
 
+(ert-deftest gemini-cli-ide-test-strip-terminal-ui-suffix ()
+  "Test stripping the Gemini TUI footer and status content."
+  (let ((input "my actual prompt\n\n▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n workspace (/Users/ezchi/projects/gemini-cli-ide)"))
+    (should (equal (gemini-cli-ide--strip-terminal-ui-suffix input) "my actual prompt")))
+  (let ((input "my prompt\n╰──────────────────────────────────────────────────────────────────────────╯\n\n                                                                ? for shortcuts"))
+    (should (equal (gemini-cli-ide--strip-terminal-ui-suffix input) "my prompt"))))
+
 (ert-deftest gemini-cli-ide-test-strip-terminal-prompt-prefix-decorative-glyph ()
   "Test stripping decorative shell prompt glyphs from captured input."
   (should (equal (gemini-cli-ide--strip-terminal-prompt-prefix "❯\u00a0ihe some thing it ")
                  "ihe some thing it "))
+  (should (equal (gemini-cli-ide--strip-terminal-prompt-prefix "│ > my command")
+                 "my command"))
   (should (equal (gemini-cli-ide--strip-terminal-prompt-prefix "$ test")
                  "test")))
 
