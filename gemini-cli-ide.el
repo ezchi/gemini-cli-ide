@@ -721,7 +721,7 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
     (when continue
       (setq gemini-cmd (concat gemini-cmd " -c")))
     ;; Add append-system-prompt flag with Emacs context
-    (let ((emacs-prompt "IMPORTANT: Connected to Emacs via gemini-cli-ide.el integration. Emacs uses mixed coordinates: Lines: 1-based (line 1 = first line), Columns: 0-based (column 0 = first column). Example: First character in file is at line 1, column 0. Available: xref (LSP), tree-sitter, imenu, project.el, flycheck/flymake diagnostics. Context-aware with automatic project/file/selection tracking. If I ask for advice, decisions, plans, or reasoning, do not give generic advice. Always critique first, give concrete failure points and counterarguments, then suggest improvements.")
+    (let ((emacs-prompt "IMPORTANT: Connected to Emacs via gemini-cli-ide.el integration. Emacs uses mixed coordinates: Lines: 1-based (line 1 = first line), Columns: 0-based (column 0 = first column). Example: First character in file is at line 1, column 0. Available: xref (LSP), tree-sitter, imenu, project.el, flycheck/flymake diagnostics. Context-aware with automatic project/file/selection tracking.")
           (combined-prompt nil))
       ;; Always include the Emacs-specific prompt
       (setq combined-prompt emacs-prompt)
@@ -729,9 +729,8 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
       (when gemini-cli-ide-system-prompt
         (setq combined-prompt (concat combined-prompt "\n\n" gemini-cli-ide-system-prompt)))
       ;; Add the combined prompt to the command
-      ;; (setq gemini-cmd (concat gemini-cmd " --prompt "
-      ;;                          (shell-quote-argument combined-prompt)))
-      )
+      (setq gemini-cmd (concat gemini-cmd " -i "
+                               (shell-quote-argument combined-prompt))))
     ;; Add any extra flags
     (when (and gemini-cli-ide-cli-extra-flags
                (not (string-empty-p gemini-cli-ide-cli-extra-flags)))
@@ -1223,6 +1222,12 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
   "Try to get the current input line from the Gemini terminal in BUFFER."
   (when (and buffer (buffer-live-p buffer))
     (with-current-buffer buffer
+      ;; Ensure (point) is at the actual terminal cursor for better extraction
+      (cond
+       ((and (derived-mode-p 'vterm-mode) (fboundp 'vterm-reset-cursor-point))
+        (vterm-reset-cursor-point))
+       ((and (boundp 'eat-terminal) eat-terminal (fboundp 'eat-term-display-cursor))
+        (goto-char (eat-term-display-cursor eat-terminal))))
       (when-let ((input
                   (or (gemini-cli-ide--get-terminal-input-from-vterm)
                       (gemini-cli-ide--get-terminal-input-from-eat)
@@ -1251,51 +1256,58 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
       (string-trim-right result))))
 
 (defun gemini-cli-ide--get-terminal-input-from-vterm ()
-  "Read the active command buffer contents from the current vterm buffer."
-  (when (and (derived-mode-p 'vterm-mode)
-             (fboundp 'vterm--get-prompt-point)
-             (fboundp 'vterm--get-cursor-point))
+  "Read the active command buffer contents from the current vterm buffer.
+Prioritizes native vterm prompt tracking if enabled and configured."
+  (when (derived-mode-p 'vterm-mode)
     (save-excursion
       (when (fboundp 'vterm-reset-cursor-point)
         (vterm-reset-cursor-point))
-      (let ((prompt-start (vterm--get-prompt-point))
-            (cursor (vterm--get-cursor-point)))
-        (when (and (integer-or-marker-p prompt-start)
-                   (integer-or-marker-p cursor)
-                   (<= prompt-start cursor))
-          (buffer-substring-no-properties prompt-start cursor))))))
+      (let* ((cursor (point))
+             (prompt-start (when (fboundp 'vterm--get-prompt-point)
+                             (vterm--get-prompt-point)))
+             (use-native (and (boundp 'vterm-use-vterm-prompt-detection-method)
+                              vterm-use-vterm-prompt-detection-method
+                              prompt-start
+                              (<= prompt-start cursor))))
+        (if use-native
+            (buffer-substring-no-properties prompt-start cursor)
+          ;; Fallback to text-based search for unconfigured shells
+          (goto-char cursor)
+          (if (re-search-backward "\\(?:gemini \\)?> " (max (point-min) (- cursor 500)) t)
+              (buffer-substring-no-properties (match-end 0) cursor)
+            ;; Last resort fallback to tracked prompt point even if not "native"
+            (when (and (integer-or-marker-p prompt-start)
+                       (<= prompt-start cursor))
+              (buffer-substring-no-properties prompt-start cursor))))))))
 
 (defun gemini-cli-ide--get-terminal-input-from-eat ()
   "Read the active command buffer contents from the current Eat buffer."
   (when (and (boundp 'eat-terminal)
              eat-terminal
-             (fboundp 'eat-term-end)
              (fboundp 'eat-term-display-cursor))
-    (let ((input-start (eat-term-end eat-terminal))
-          (input-end (eat-term-display-cursor eat-terminal)))
-      (when (and (integer-or-marker-p input-start)
-                 (integer-or-marker-p input-end)
-                 (<= input-start input-end))
-        (buffer-substring-no-properties input-start input-end)))))
+    (let ((input-end (eat-term-display-cursor eat-terminal))
+          (input-start (when (fboundp 'eat-term-end)
+                         (eat-term-end eat-terminal))))
+      (save-excursion
+        (goto-char input-end)
+        (if (re-search-backward "\\(?:gemini \\)?> " (max (point-min) (- input-end 500)) t)
+            (buffer-substring-no-properties (match-end 0) input-end)
+          ;; Fallback to eat's tracked terminal end
+          (when (and (integer-or-marker-p input-start)
+                     (<= input-start input-end))
+            (buffer-substring-no-properties input-start input-end)))))))
 
 (defun gemini-cli-ide--get-terminal-input-from-text ()
   "Fallback text-based extraction for terminal buffers without prompt metadata."
   (save-excursion
-    (goto-char (point-max))
-    (skip-chars-backward " \t\n\r")
+    ;; Start from current point (which is at the cursor for vterm/eat)
+    ;; instead of point-max to avoid grabbing TUI footers.
     (let ((end (point)))
-      (forward-line 0)
-      (let ((line (buffer-substring-no-properties (point) end)))
-        (cond
-         ((string-match "gemini > \\(.*\\)" line)
-          (match-string 1 line))
-         ((string-match "> \\(.*\\)" line)
-          (match-string 1 line))
-         (t
-          (if (save-excursion
-                (re-search-backward "\\(?:gemini \\)?> " nil t))
-              (buffer-substring-no-properties (match-end 0) end)
-            line)))))))
+      (if (re-search-backward "\\(?:gemini \\)?> " (max (point-min) (- end 1000)) t)
+          (buffer-substring-no-properties (match-end 0) end)
+        ;; Fallback to just the current line
+        (forward-line 0)
+        (buffer-substring-no-properties (point) end)))))
 
 (defun gemini-cli-ide--cancel-prompt-buffer ()
   "Cancel the prompt and kill the buffer."

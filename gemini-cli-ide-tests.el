@@ -596,6 +596,43 @@ have completed before cleanup.  Waits up to 5 seconds."
         (should (equal (gemini-cli-ide--get-terminal-input (current-buffer))
                        "pending input"))))))
 
+(ert-deftest gemini-cli-ide-test-get-terminal-input-robustness ()
+  "Test robustness of terminal input extraction against stale prompts and footers."
+  (with-temp-buffer
+    ;; Scenario 1: Stale vterm prompt point (pointing to previous command)
+    (erase-buffer)
+    (insert "gemini > previous command\nresponse here\ngemini > current typing")
+    (let ((stale-prompt-start (save-excursion
+                                (goto-char (point-min))
+                                (search-forward "gemini > ")))
+          (cursor (point-max)))
+      (cl-letf (((symbol-function 'derived-mode-p)
+                 (lambda (&rest modes) (memq 'vterm-mode modes)))
+                ((symbol-function 'vterm-reset-cursor-point) #'ignore)
+                ((symbol-function 'vterm--get-prompt-point)
+                 (lambda () stale-prompt-start))
+                ((symbol-function 'vterm--get-cursor-point)
+                 (lambda () cursor)))
+        ;; Should find the "current typing" because of backward search,
+        ;; even though vterm's prompt metadata is stale.
+        (should (equal (gemini-cli-ide--get-terminal-input (current-buffer))
+                       "current typing"))))
+
+    ;; Scenario 2: Footer present and cursor is before it
+    (erase-buffer)
+    (insert "gemini > real input")
+    (let ((cursor (point)))
+      (insert "\n▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n footer here")
+      (cl-letf (((symbol-function 'derived-mode-p)
+                 (lambda (&rest modes) (memq 'vterm-mode modes)))
+                ((symbol-function 'vterm-reset-cursor-point) #'ignore)
+                ((symbol-function 'vterm--get-prompt-point) (lambda () nil))
+                ((symbol-function 'vterm--get-cursor-point) (lambda () cursor)))
+        ;; Should ONLY get "real input" and NOT the footer, because it
+        ;; uses the cursor position as the end point.
+        (should (equal (gemini-cli-ide--get-terminal-input (current-buffer))
+                       "real input"))))))
+
 (ert-deftest gemini-cli-ide-test-strip-terminal-ui-suffix ()
   "Test stripping the Gemini TUI footer and status content."
   (let ((input "my actual prompt\n\n▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n workspace (/Users/ezchi/projects/gemini-cli-ide)"))

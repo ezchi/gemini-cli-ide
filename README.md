@@ -63,6 +63,44 @@ The prompt buffer provides a full Emacs buffer for composing complex prompts wit
 | `C-c C-c` | Apply prompt and send to Gemini |
 | `C-c C-k` | Cancel and close prompt buffer |
 
+## Vterm Prompt Tracking Setup (Recommended)
+
+To ensure the most reliable terminal interaction (especially for `C-c '` and allowing Gemini to see what you are currently typing), it is highly recommended to enable **vterm's native prompt tracking**.
+
+1. **Enable in Emacs:**
+   ```elisp
+   (setq vterm-use-vterm-prompt-detection-method t)
+   ```
+
+2. **Configure your shell:**
+   Add the following to your shell configuration file:
+
+   **Bash (~/.bashrc):**
+   ```bash
+   vterm_printf(){
+       if [ -n "$TMUX" ] && { [ "${TERM%%-*}" = "tmux" ] || [ "${TERM%%-*}" = "screen" ]; }; then
+           printf "\ePtmux;\e\e]%s\007\e\\" "$1"
+       elif [ "${TERM%%-*}" = "screen" ]; then
+           printf "\eP\e]%s\007\e\\" "$1"
+       else
+           printf "\e]%s\e\\" "$1"
+       fi
+   }
+   vterm_prompt_end(){
+       vterm_printf "51;A$(whoami)@$(hostname):$(pwd)"
+   }
+   PS1=$PS1'\[$(vterm_prompt_end)\]'
+   ```
+
+   **Zsh (~/.zshrc):**
+   ```zsh
+   vterm_prompt_end() {
+       vterm_printf "51;A$(whoami)@$(hostname):$(pwd)"
+   }
+   setopt PROMPT_SUBST
+   PROMPT=$PROMPT'%{$(vterm_prompt_end)%}'
+   ```
+
 ## License
 
 GPL-3.0-or-later

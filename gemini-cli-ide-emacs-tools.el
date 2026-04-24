@@ -332,6 +332,23 @@ If INCLUDE_CHILDREN is non-nil, include child nodes."
          (format "Error getting tree-sitter info for %s: %s"
                  file-path (error-message-string err)))))))
 
+(defun gemini-cli-ide-mcp-get-terminal-input ()
+  "Get the current unsent input from the project's Gemini terminal.
+This allows the AI to see what you are currently typing before you send it.
+Requires vterm or eat terminal backend."
+  (let ((context (gemini-cli-ide-mcp-server-get-session-context)))
+    (if (not context)
+        "No active Gemini session context found."
+      (let* ((working-dir (plist-get context :project-dir))
+             (buffer-name (funcall gemini-cli-ide-buffer-name-function working-dir))
+             (buffer (get-buffer buffer-name)))
+        (if (not buffer)
+            (format "Gemini terminal buffer '%s' not found." buffer-name)
+          (let ((input (gemini-cli-ide--get-terminal-input buffer)))
+            (if (and input (not (string-empty-p input)))
+                input
+              "No unsent input found in the terminal prompt.")))))))
+
 ;;; Tool Configuration
 
 ;;; Tool Registration
@@ -344,6 +361,13 @@ If INCLUDE_CHILDREN is non-nil, include child nodes."
   "Set up Emacs MCP tools for Gemini Cli IDE."
   (interactive)
   (setq gemini-cli-ide-enable-mcp-server t)
+
+  ;; Register terminal input tool
+  (gemini-cli-ide-make-tool
+   :function #'gemini-cli-ide-mcp-get-terminal-input
+   :name "gemini-cli-ide-mcp-get-terminal-input"
+   :description "Read what the user is currently typing in the Gemini terminal before they press Enter. Use this to provide real-time assistance or clarify context"
+   :args nil)
 
   ;; Register xref tools
   (gemini-cli-ide-make-tool
