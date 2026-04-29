@@ -142,7 +142,7 @@ Set to nil to disable (default)."
 (defcustom gemini-cli-ide-mcp-allowed-tools 'auto
   "Configuration for allowed MCP tools when MCP server is enabled.
 Can be one of:
-  'auto - Automatically allow all configured emacs-tools (default)
+  `auto' - Automatically allow all configured emacs-tools (default)
   nil - Disable the --allowedTools flag
   A string - Custom pattern/tools passed directly to --allowedTools
   A list of strings - List of specific tool names to allow"
@@ -154,7 +154,7 @@ Can be one of:
 
 (defcustom gemini-cli-ide-window-side 'right
   "Side of the frame where the Gemini CLI window should appear.
-Can be `'left', `'right', `'top', or `'bottom'."
+Can be `left', `right', `top', or `bottom'."
   :type '(choice (const :tag "Left" left)
                  (const :tag "Right" right)
                  (const :tag "Top" top)
@@ -259,6 +259,11 @@ with imperceptible latency."
   :type 'number
   :group 'gemini-cli-ide)
 
+(define-obsolete-variable-alias
+  'gemini-cli-ide-eat-initialization-delay
+  'gemini-cli-ide-terminal-initialization-delay
+  "0.2.6")
+
 (defcustom gemini-cli-ide-terminal-initialization-delay 0.1
   "Initialization delay for terminal stability.
 Provides a brief stabilization period when launching terminals
@@ -278,11 +283,6 @@ when you switch focus to other windows and return.  This provides
 a more stable viewing experience when working with multiple windows."
   :type 'boolean
   :group 'gemini-cli-ide)
-
-(define-obsolete-variable-alias
-  'gemini-cli-ide-eat-initialization-delay
-  'gemini-cli-ide-terminal-initialization-delay
-  "0.2.6")
 
 ;;; Constants
 
@@ -397,7 +397,7 @@ cursor management, and process buffering for superior user experience."
   (setq-local blink-cursor-mode nil)
   (setq-local cursor-type nil)  ; Let vterm handle the cursor entirely
   ;; Increase process read buffering to batch more updates together
-  (when-let ((proc (get-buffer-process (current-buffer))))
+  (when-let* ((proc (get-buffer-process (current-buffer))))
     (set-process-query-on-exit-flag proc nil)
     ;; Try to make vterm read larger chunks at once
     (when (fboundp 'process-put)
@@ -503,7 +503,7 @@ This function binds:
 
 (defun gemini-cli-ide--session-buffer-p (buffer)
   "Check if BUFFER belongs to a Gemini CLI session."
-  (when-let ((name (if (stringp buffer) buffer (buffer-name buffer))))
+  (when-let* ((name (if (stringp buffer) buffer (buffer-name buffer))))
     (string-prefix-p "*gemini-cli[" name)))
 
 (defun gemini-cli-ide--terminal-reflow-filter (original-fn &rest args)
@@ -545,7 +545,7 @@ width has actually changed, working around the scrolling glitch."
 
 (defun gemini-cli-ide--get-working-directory ()
   "Get the current working directory (project root or current directory)."
-  (if-let ((project (project-current)))
+  (if-let* ((project (project-current)))
       (expand-file-name (project-root project))
     (expand-file-name default-directory)))
 
@@ -657,7 +657,7 @@ If `gemini-cli-ide-focus-on-open' is non-nil, the window is selected."
               (remhash directory gemini-cli-ide--session-ids)))
           ;; Kill the vterm buffer if it exists
           (let ((buffer-name (gemini-cli-ide--get-buffer-name directory)))
-            (when-let ((buffer (get-buffer buffer-name)))
+            (when-let* ((buffer (get-buffer buffer-name)))
               (when (buffer-live-p buffer)
                 (let ((kill-buffer-hook nil) ; Disable hooks to prevent recursion
                       (kill-buffer-query-functions nil)) ; Don't ask for confirmation
@@ -697,7 +697,7 @@ If the window is not visible, it will be shown in a side window."
       (progn
         (gemini-cli-ide--display-buffer-in-side-window existing-buffer)
         ;; Update the original tab when showing the window
-        (when-let ((session (gemini-cli-ide-mcp--get-session-for-project working-dir)))
+        (when-let* ((session (gemini-cli-ide-mcp--get-session-for-project working-dir)))
           (when (fboundp 'tab-bar--current-tab)
             (setf (gemini-cli-ide-mcp-session-original-tab session) (tab-bar--current-tab))))
         (gemini-cli-ide-debug "Gemini CLI window shown")))))
@@ -708,8 +708,10 @@ If CONTINUE is non-nil, add the -c flag.
 If RESUME is non-nil, add the -r flag.
 If SESSION-ID is provided, it's included in the MCP server URL path.
 If `gemini-cli-ide-cli-debug' is non-nil, add the -d flag.
-If `gemini-cli-ide-system-prompt' is non-nil, add the --append-system-prompt flag.
-Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
+If `gemini-cli-ide-system-prompt' is non-nil, add the
+--append-system-prompt flag.
+Additional flags from `gemini-cli-ide-cli-extra-flags' are also
+included."
   (let ((gemini-cmd gemini-cli-ide-cli-path))
     ;; Add debug flag if enabled
     (when gemini-cli-ide-cli-debug
@@ -737,7 +739,7 @@ Additional flags from `gemini-cli-ide-cli-extra-flags' are also included."
       (setq gemini-cmd (concat gemini-cmd " " gemini-cli-ide-cli-extra-flags)))
     ;; Add MCP tools config if enabled
     (when (gemini-cli-ide-mcp-server-ensure-server)
-      (when-let ((config (gemini-cli-ide-mcp-server-get-config session-id)))
+      (when-let* ((config (gemini-cli-ide-mcp-server-get-config session-id)))
         (let* ((mcp-servers (cdr (assoc 'mcpServers config)))
                (emacs-tools (cdr (assoc 'emacs-tools mcp-servers)))
                (url (cdr (assoc 'url emacs-tools)))
@@ -1039,7 +1041,7 @@ conversation in the current directory."
   (interactive)
   (let* ((working-dir (gemini-cli-ide--get-working-directory))
          (buffer-name (gemini-cli-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
+    (if-let* ((buffer (get-buffer buffer-name)))
         (progn
           ;; Kill the buffer (cleanup will be handled by hooks)
           ;; The process sentinel will handle cleanup when the process dies
@@ -1056,8 +1058,8 @@ If the buffer is not visible, display it in the configured side window.
 If the buffer is already visible, switch focus to it."
   (interactive)
   (let ((buffer-name (gemini-cli-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
-        (if-let ((window (get-buffer-window buffer)))
+    (if-let* ((buffer (get-buffer buffer-name)))
+        (if-let* ((window (get-buffer-window buffer)))
             ;; Buffer is visible, just focus it
             (select-window window)
           ;; Buffer exists but not visible, display it
@@ -1081,7 +1083,7 @@ If the buffer is already visible, switch focus to it."
           (when choice
             (let* ((directory (alist-get choice sessions nil nil #'string=))
                    (buffer-name (funcall gemini-cli-ide-buffer-name-function directory)))
-              (if-let ((buffer (get-buffer buffer-name)))
+              (if-let* ((buffer (get-buffer buffer-name)))
                   (gemini-cli-ide--display-buffer-in-side-window buffer)
                 (user-error "Buffer for session %s no longer exists" choice)))))
       (gemini-cli-ide-log "No active Gemini CLI sessions"))))
@@ -1103,18 +1105,20 @@ If the buffer is already visible, switch focus to it."
   "Send escape key to the Gemini CLI terminal buffer for the current project."
   (interactive)
   (let ((buffer-name (gemini-cli-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
+    (if-let* ((buffer (get-buffer buffer-name)))
         (with-current-buffer buffer
           (gemini-cli-ide--terminal-send-escape))
       (user-error "No Gemini CLI session for this project"))))
 
 ;;;###autoload
 (defun gemini-cli-ide-insert-newline ()
-  "Send newline (backslash + return) to the Gemini CLI terminal buffer for the current project.
-This simulates typing backslash followed by Enter, which Gemini CLI interprets as a newline."
+  "Send newline (backslash + return) to the Gemini CLI terminal.
+This sends the newline sequence to the terminal buffer for the
+current project.  This simulates typing backslash followed by
+Enter, which Gemini CLI interprets as a newline."
   (interactive)
   (let ((buffer-name (gemini-cli-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
+    (if-let* ((buffer (get-buffer buffer-name)))
         (with-current-buffer buffer
           (gemini-cli-ide--terminal-send-string "\\")
           ;; Small delay to ensure prompt text is processed before sending return
@@ -1144,7 +1148,7 @@ If NO-RETURN is non-nil, do not send the return key.
 If CLEAR-LINE is non-nil, send C-u to clear the current line first."
   (interactive)
   (let ((buffer-name (gemini-cli-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
+    (if-let* ((buffer (get-buffer buffer-name)))
         (let ((prompt-to-send (or prompt (read-string "Gemini prompt: "))))
           (when (or clear-line (not (string-empty-p prompt-to-send)))
             (with-current-buffer buffer
@@ -1165,8 +1169,10 @@ If CLEAR-LINE is non-nil, send C-u to clear the current line first."
 (defun gemini-cli-ide-edit-prompt ()
   "Edit the Gemini CLI terminal prompt in a buffer.
 The buffer is in `text-mode` and `with-editor-mode` (if available).
-The buffer is initialized with the active region (if any) or the current terminal input.
-Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to cancel."
+The buffer is initialized with the active region (if any) or the
+current terminal input.
+Press C-c C-c to update the terminal prompt (without sending) or
+C-c C-k to cancel."
   (interactive)
   (let* ((working-dir (gemini-cli-ide--get-working-directory))
          (buffer-name (gemini-cli-ide--get-buffer-name))
@@ -1228,7 +1234,7 @@ Press C-c C-c to update the terminal prompt (without sending) or C-c C-k to canc
         (vterm-reset-cursor-point))
        ((and (boundp 'eat-terminal) eat-terminal (fboundp 'eat-term-display-cursor))
         (goto-char (eat-term-display-cursor eat-terminal))))
-      (when-let ((input
+      (when-let* ((input
                   (or (gemini-cli-ide--get-terminal-input-from-vterm)
                       (gemini-cli-ide--get-terminal-input-from-eat)
                       (gemini-cli-ide--get-terminal-input-from-text))))
@@ -1356,7 +1362,7 @@ Prioritizes native vterm prompt tracking if enabled and configured."
 
 (defun gemini-cli-ide--at-mentioned-completion-at-point ()
   "Completion at point for '@' mentions in the prompt buffer."
-  (when-let ((bounds (gemini-cli-ide--at-mentioned-bounds)))
+  (when-let* ((bounds (gemini-cli-ide--at-mentioned-bounds)))
     (list (car bounds) (cdr bounds) #'gemini-cli-ide--at-mention-completion-table
           :exclusive 'no
           :annotation-function (lambda (_) " [File]")

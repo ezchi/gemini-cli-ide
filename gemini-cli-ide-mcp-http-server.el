@@ -37,6 +37,13 @@
 (require 'gemini-cli-ide-debug)
 (require 'gemini-cli-ide-mcp-server)
 
+(eval-when-compile
+  (require 'web-server nil t)
+  ;; Define dummy struct if web-server is not available during compilation
+  ;; to suppress "Unknown slot" warnings for with-slots
+  (unless (featurep 'web-server)
+    (cl-defstruct ws-request process)))
+
 (defvar gemini-cli-ide-mcp-server--current-session-id)
 
 ;; Require web-server at runtime to avoid batch mode issues
@@ -100,7 +107,7 @@ Returns a cons cell of (server . port)."
           (gemini-cli-ide-debug "MCP server started on port %d" actual-port)
           ;; Set up process sentinel to detect crashes
           (set-process-sentinel process
-                                (lambda (proc event)
+                                (lambda (_proc event)
                                   (gemini-cli-ide-debug "MCP server process event: %s" event)
                                   (when (string-match-p "\\(exited\\|killed\\|terminated\\)" event)
                                     (gemini-cli-ide-debug "MCP server died unexpectedly"))))

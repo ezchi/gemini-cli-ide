@@ -47,8 +47,8 @@
   "Mock debug flag for testing.")
 (defvar gemini-cli-ide-log-with-context t
   "Mock log context flag for testing.")
-(defun gemini-cli-ide-debug (&rest _args)
-  "Mock debug function that does nothing."
+(defmacro gemini-cli-ide-debug (&rest _args)
+  "Mock debug macro that does nothing."
   nil)
 (defun gemini-cli-ide-clear-debug ()
   "Mock clear debug function."
@@ -391,10 +391,9 @@ have completed before cleanup.  Waits up to 5 seconds."
     (should (eq gemini-cli-ide-terminal-backend 'eat)))
 
   ;; Test invalid backend
-  (let ((gemini-cli-ide-terminal-backend 'invalid-backend)
-        (orig-featurep (symbol-function 'featurep)))
+  (let ((gemini-cli-ide-terminal-backend 'invalid-backend))
     (cl-letf (((symbol-function 'featurep)
-               (lambda (sym) nil)))
+               (lambda (_sym) nil)))
       (should-error (gemini-cli-ide--terminal-ensure-backend)
                     :type 'user-error))))
 
@@ -412,7 +411,7 @@ have completed before cleanup.  Waits up to 5 seconds."
               ((symbol-function 'vterm-send-return)
                (lambda () (setq vterm-return-sent t)))
               ((symbol-function 'eat-term-send-string)
-               (lambda (term str) (setq eat-string-sent str))))
+               (lambda (_term str) (setq eat-string-sent str))))
 
       ;; Test vterm backend
       (let ((gemini-cli-ide-terminal-backend 'vterm))
@@ -582,8 +581,8 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test grabbing terminal input from Eat's active input region."
   (with-temp-buffer
     (insert "previous output\n> pending input\n▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n workspace (/directory)")
-    (let ((eat-terminal 'mock-terminal)
-          (input-start (save-excursion
+    (setq-local eat-terminal 'mock-terminal)
+    (let ((input-start (save-excursion
                          (goto-char (point-min))
                          (search-forward "\n")))
           (cursor (point-max)))
@@ -783,12 +782,12 @@ have completed before cleanup.  Waits up to 5 seconds."
               ((symbol-function 'eat-mode)
                (lambda () nil))
               ((symbol-function 'eat-exec)
-               (lambda (buffer name cmd startfile args)
+               (lambda (buffer _name _cmd _startfile _args)
                  (setq mock-eat-buffer buffer)))
               ((symbol-function 'get-buffer-process)
-               (lambda (buffer) mock-process))
+               (lambda (_buffer) mock-process))
               ((symbol-function 'gemini-cli-ide-mcp-start)
-               (lambda (dir) 12345)))
+               (lambda (_dir) 12345)))
 
       ;; Test vterm backend session creation
       (let ((gemini-cli-ide-terminal-backend 'vterm)
@@ -989,16 +988,17 @@ have completed before cleanup.  Waits up to 5 seconds."
 
 (ert-deftest gemini-cli-ide-test-obsolete-eat-delay-alias ()
   "Test that the obsolete eat delay alias still works."
-  ;; The alias should be defined
-  (should (boundp 'gemini-cli-ide-eat-initialization-delay))
-  ;; Setting the old variable should affect the new one
-  (let ((original-delay gemini-cli-ide-terminal-initialization-delay))
-    (unwind-protect
-        (progn
-          (setq gemini-cli-ide-eat-initialization-delay 0.3)
-          (should (= gemini-cli-ide-terminal-initialization-delay 0.3)))
-      ;; Restore original value
-      (setq gemini-cli-ide-terminal-initialization-delay original-delay))))
+  (with-suppressed-warnings ((obsolete gemini-cli-ide-eat-initialization-delay))
+    ;; The alias should be defined
+    (should (boundp 'gemini-cli-ide-eat-initialization-delay))
+    ;; Setting the old variable should affect the new one
+    (let ((original-delay gemini-cli-ide-terminal-initialization-delay))
+      (unwind-protect
+          (progn
+            (setq gemini-cli-ide-eat-initialization-delay 0.3)
+            (should (= gemini-cli-ide-terminal-initialization-delay 0.3)))
+        ;; Restore original value
+        (setq gemini-cli-ide-terminal-initialization-delay original-delay)))))
 
 (ert-deftest gemini-cli-ide-test-stop-no-session ()
   "Test stop command when no session is running."
@@ -1126,7 +1126,7 @@ have completed before cleanup.  Waits up to 5 seconds."
                                  (funcall gemini-cli-ide-buffer-name-function dir))
                                (list dir1 dir2))))
           (dolist (buffer-name buffers)
-            (when-let ((buffer (get-buffer buffer-name)))
+            (when-let* ((buffer (get-buffer buffer-name)))
               (gemini-cli-ide-tests--wait-for-process buffer)
               (kill-buffer buffer))))
         (delete-directory dir1 t)
@@ -1251,7 +1251,8 @@ have completed before cleanup.  Waits up to 5 seconds."
 ;;; MCP Test Helper Functions
 
 (defmacro gemini-cli-ide-mcp-tests--with-temp-file (file-var content &rest body)
-  "Create a temporary file with CONTENT, bind its path to FILE-VAR, and execute BODY."
+  "Create a temporary file with CONTENT, bind its path to FILE-VAR,
+and execute BODY."
   (declare (indent 2))
   `(let ((,file-var (make-temp-file "gemini-mcp-test-")))
      (unwind-protect
@@ -1681,7 +1682,7 @@ have completed before cleanup.  Waits up to 5 seconds."
             (insert "}\n"))
 
           ;; Test 1: Text pattern selection with both start and end
-          (let ((result (gemini-cli-ide-mcp-handle-open-file
+          (let ((_result (gemini-cli-ide-mcp-handle-open-file
                          `((path . ,temp-file)
                            (startText . "function foo")
                            (endText . "}")))))
@@ -1701,7 +1702,7 @@ have completed before cleanup.  Waits up to 5 seconds."
           ;; Test 2: Only start text pattern
           (with-current-buffer (find-buffer-visiting temp-file)
             (deactivate-mark))
-          (let ((result (gemini-cli-ide-mcp-handle-open-file
+          (let ((_result (gemini-cli-ide-mcp-handle-open-file
                          `((path . ,temp-file)
                            (startText . "function bar")))))
             ;; Should position cursor at start of "function bar"
@@ -1710,7 +1711,7 @@ have completed before cleanup.  Waits up to 5 seconds."
               (should-not (use-region-p))))
 
           ;; Test 3: Text pattern with fallback to line numbers
-          (let ((result (gemini-cli-ide-mcp-handle-open-file
+          (let ((_result (gemini-cli-ide-mcp-handle-open-file
                          `((path . ,temp-file)
                            (startText . "nonexistent text")
                            (startLine . 2)
@@ -1724,7 +1725,7 @@ have completed before cleanup.  Waits up to 5 seconds."
           ;; Test 4: Text patterns take precedence over line numbers
           (with-current-buffer (find-buffer-visiting temp-file)
             (deactivate-mark))
-          (let ((result (gemini-cli-ide-mcp-handle-open-file
+          (let ((_result (gemini-cli-ide-mcp-handle-open-file
                          `((path . ,temp-file)
                            (startText . "Line 5")
                            (startLine . 1)))))
@@ -1763,7 +1764,7 @@ have completed before cleanup.  Waits up to 5 seconds."
        (cl-letf* (((symbol-function 'gemini-cli-ide--get-buffer-name)
                    (lambda (&optional _dir) "*Gemini Cli Test*"))
                   ((symbol-function 'gemini-cli-ide--display-buffer-in-side-window)
-                   (lambda (buffer)
+                   (lambda (_buffer)
                      (setq gemini-window-displayed t)
                      (selected-window)))
                   ((symbol-function 'ediff-buffers)
@@ -1832,7 +1833,7 @@ have completed before cleanup.  Waits up to 5 seconds."
        ;; Mock ediff functions to capture control buffer names
        (cl-letf* ((ediff-called-count 0)
                   ((symbol-function 'ediff-buffers)
-                   (lambda (buf-A buf-B)
+                   (lambda (_buf-A _buf-B)
                      (cl-incf ediff-called-count)
                      ;; Simulate ediff creating a control buffer with the suffix
                      (let ((suffix (or ediff-control-buffer-suffix "")))
@@ -1891,7 +1892,7 @@ have completed before cleanup.  Waits up to 5 seconds."
         (project-b "/tmp/project-b/")
         (session-a nil)
         (session-b nil)
-        (deferred-responses '())
+        (_deferred-responses '())
         (sent-responses '()))
     ;; Create mock websocket-send-text to capture responses
     (cl-letf* (((symbol-function 'websocket-send-text)
@@ -1988,7 +1989,7 @@ have completed before cleanup.  Waits up to 5 seconds."
 
 (cl-defstruct gemini-cli-ide-mcp-server-tests--mock-process)
 
-(defun gemini-cli-ide-mcp-server-tests--mock-ws-response-header (process status &rest headers)
+(defun gemini-cli-ide-mcp-server-tests--mock-ws-response-header (_process status &rest headers)
   "Mock ws-response-header function."
   (setq gemini-cli-ide-mcp-server-tests--last-response-status status)
   (setq gemini-cli-ide-mcp-server-tests--last-response-headers headers))
@@ -2019,12 +2020,12 @@ have completed before cleanup.  Waits up to 5 seconds."
               ((symbol-function 'gemini-cli-ide-mcp-http-server-stop)
                #'gemini-cli-ide-mcp-server-tests--mock-server-stop)
               ((symbol-function 'require)
-               (lambda (feature &optional _filename _noerror)
+               (lambda (feature &optional filename noerror)
                  (cond ((eq feature 'gemini-cli-ide-mcp-http-server) nil)
                        ((memq feature '(gemini-cli-ide-mcp-server websocket vterm flycheck
                                                                   gemini-cli-ide-debug gemini-cli-ide-mcp-handlers
                                                                   gemini-cli-ide transient)) nil)
-                       (t (funcall (cl-letf-saved-symbol-function 'require) feature _filename _noerror))))))
+                       (t (funcall (cl-letf-saved-symbol-function 'require) feature filename noerror))))))
       ;; First session should start the server
       (gemini-cli-ide-mcp-server-session-started)
       (should (= gemini-cli-ide-mcp-server--session-count 1))
