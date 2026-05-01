@@ -28,6 +28,7 @@
 ;;; Code:
 
 (require 'transient)
+(require 'emacs-mcp)
 (require 'gemini-cli-ide-debug)
 
 ;; Declare functions from other files to avoid circular dependencies
@@ -46,14 +47,10 @@
 (declare-function gemini-cli-ide-toggle-recent "gemini-cli-ide" ())
 (declare-function gemini-cli-ide-check-status "gemini-cli-ide" ())
 (declare-function gemini-cli-ide--ensure-cli "gemini-cli-ide" ())
-(declare-function gemini-cli-ide-mcp--active-sessions "gemini-cli-ide-mcp" ())
-(declare-function gemini-cli-ide-mcp-session-project-dir "gemini-cli-ide-mcp" (session))
-(declare-function gemini-cli-ide-mcp-session-port "gemini-cli-ide-mcp" (session))
-(declare-function gemini-cli-ide-mcp-session-client "gemini-cli-ide-mcp" (session))
-(declare-function gemini-cli-ide-mcp-session-buffer "gemini-cli-ide-mcp" (session))
-(declare-function gemini-cli-ide-mcp-session-last-buffer "gemini-cli-ide-mcp" (session))
-(declare-function gemini-cli-ide-mcp--get-current-session "gemini-cli-ide-mcp" ())
 (declare-function gemini-cli-ide--get-working-directory "gemini-cli-ide" ())
+(declare-function gemini-cli-ide--get-process "gemini-cli-ide" (&optional directory))
+(declare-function gemini-cli-ide--get-buffer-name "gemini-cli-ide" (&optional directory))
+(declare-function emacs-mcp-connection-info "emacs-mcp" ())
 
 ;; Declare variables
 (defvar gemini-cli-ide-cli-path)
@@ -74,8 +71,15 @@
 ;;; Helper Functions
 
 (defun gemini-cli-ide--has-active-session-p ()
-  "Check if there's an active Gemin Cli session for the current buffer."
-  (when (gemini-cli-ide-mcp--get-current-session) t))
+  "Check if there's an active Gemin Cli session for the current buffer.
+A session is active when a live Gemini terminal buffer exists for
+the current project's working directory."
+  (let* ((working-dir (gemini-cli-ide--get-working-directory))
+         (buf-name (gemini-cli-ide--get-buffer-name working-dir))
+         (buf (and buf-name (get-buffer buf-name))))
+    (and buf (buffer-live-p buf)
+         (gemini-cli-ide--get-process working-dir)
+         t)))
 
 (defun gemini-cli-ide--start-description ()
   "Dynamic description for start command based on session status."
@@ -127,13 +131,16 @@
 
 (defun gemini-cli-ide--session-status ()
   "Return a string describing the current session status."
-  (if-let* ((session (gemini-cli-ide-mcp--get-current-session)))
-      (let* ((project-dir (gemini-cli-ide-mcp-session-project-dir session))
-             (project-name (file-name-nondirectory (directory-file-name project-dir)))
-             (connected (if (gemini-cli-ide-mcp-session-client session) "connected" "disconnected")))
-        (propertize (format "Active session in [%s] - %s" project-name connected)
-                    'face 'success))
-    (propertize "No active session" 'face 'transient-inactive-value)))
+  (let* ((working-dir (gemini-cli-ide--get-working-directory))
+         (buf-name (gemini-cli-ide--get-buffer-name working-dir))
+         (buf (and buf-name (get-buffer buf-name))))
+    (if (and buf (buffer-live-p buf)
+             (gemini-cli-ide--get-process working-dir))
+        (let ((project-name (file-name-nondirectory
+                             (directory-file-name working-dir))))
+          (propertize (format "Active session in [%s]" project-name)
+                      'face 'success))
+      (propertize "No active session" 'face 'transient-inactive-value))))
 
 (defun gemini-cli-ide-toggle-window ()
   "Toggle visibility of Gemin Cli window.
@@ -159,38 +166,33 @@ Otherwise, if multiple sessions exist, prompt for selection."
     (user-error "Gemin Cli CLI not available")))
 
 (defun gemini-cli-ide-show-mcp-sessions ()
-  "Show information about active MCP sessions."
+  "Show information about the active `emacs-mcp' server.
+v0.2 of this package tracked a per-project MCP session struct;
+v0.3.0 delegates the MCP server to the external `emacs-mcp'
+package which exposes a single connection-info entry point.
+Per-session enumeration is not exposed by `emacs-mcp' yet —
+tracked upstream."
   (interactive)
-  (let ((sessions (gemini-cli-ide-mcp--active-sessions)))
-    (if sessions
-        (with-output-to-temp-buffer "*Gemin Cli MCP Sessions*"
-          (princ "Active MCP Sessions\n")
-          (princ "==================\n\n")
-          (dolist (session sessions)
-            (princ (format "Project: %s\n" (gemini-cli-ide-mcp-session-project-dir session)))
-            (princ (format "  Port: %d\n" (gemini-cli-ide-mcp-session-port session)))
-            (princ (format "  Connected: %s\n"
-                           (if (gemini-cli-ide-mcp-session-client session) "Yes" "No")))
-            (princ (format "  Buffer: %s\n"
-                           (if (gemini-cli-ide-mcp-session-last-buffer session)
-                               (buffer-name (gemini-cli-ide-mcp-session-last-buffer session))
-                             "None")))
-            (princ "\n")))
-      (gemini-cli-ide-log "No active MCP sessions"))))
+  (if-let* ((info (emacs-mcp-connection-info)))
+      (with-output-to-temp-buffer "*Gemin Cli MCP Sessions*"
+        (princ "Active emacs-mcp server\n")
+        (princ "=======================\n\n")
+        (princ (format "URL:      %s\n" (alist-get :url info)))
+        (princ (format "Host:     %s\n" (alist-get :host info)))
+        (princ (format "Port:     %s\n" (alist-get :port info)))
+        (princ (format "Lockfile: %s\n" (alist-get :lockfile info)))
+        (princ "\nPer-Gemini-buffer session enumeration is not\n")
+        (princ "yet exposed by emacs-mcp; tracked upstream."))
+    (gemini-cli-ide-log "No emacs-mcp server is running")))
 
 (defun gemini-cli-ide-show-active-ports ()
-  "Show active ports used by MCP servers."
+  "Show the active port used by the running `emacs-mcp' server, if any."
   (interactive)
-  (let ((sessions (gemini-cli-ide-mcp--active-sessions)))
-    (if sessions
-        (with-output-to-temp-buffer "*Gemin Cli Active Ports*"
-          (princ "Active MCP Server Ports\n")
-          (princ "======================\n\n")
-          (dolist (session sessions)
-            (princ (format "Port %d: %s\n"
-                           (gemini-cli-ide-mcp-session-port session)
-                           (abbreviate-file-name (gemini-cli-ide-mcp-session-project-dir session))))))
-      (gemini-cli-ide-log "No active MCP servers"))))
+  (if-let* ((info (emacs-mcp-connection-info)))
+      (gemini-cli-ide-log "emacs-mcp listening on port %s (%s)"
+                          (alist-get :port info)
+                          (alist-get :url info))
+    (gemini-cli-ide-log "No emacs-mcp server is running")))
 
 (defun gemini-cli-ide-toggle-debug-mode ()
   "Toggle Gemin Cli debug mode."

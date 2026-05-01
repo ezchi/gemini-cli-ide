@@ -25,9 +25,9 @@ process_file() {
         *.el)
             echo "Formatting and cleaning: $file" >&2
 
-            emacs -batch -L . --eval "(progn
+            emacs -batch -L . -L ~/Projects/emacs-mcp --eval "(progn
                 (require 'transient nil t)
-                (require 'gemini-cli-ide-mcp-server nil t)
+                (require 'emacs-mcp nil t)
                 (find-file \"$file\")
                 (emacs-lisp-mode)
                 (setq-local indent-tabs-mode nil)

@@ -1,0 +1,99 @@
+Running compile and test checks...
+=== Running byte-compilation check ===
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-jsonrpc.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-session.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-confirm.el’ newer than byte-compiled file; using older file
+✓ Byte-compilation check passed!
+
+=== Running native-compilation check ===
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-jsonrpc.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-session.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-confirm.el’ newer than byte-compiled file; using older file
+✓ Native-compilation check passed!
+
+=== Running tests ===
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-jsonrpc.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-session.el’ newer than byte-compiled file; using older file
+Source file ‘/Users/ezchi/Projects/emacs-mcp/emacs-mcp-confirm.el’ newer than byte-compiled file; using older file
+Running 56 tests (2026-05-01 15:36:22+1000, selector ‘t’)
+   passed   1/56  gemini-cli-ide-test-apply-empty-prompt-buffer-clears-terminal (0.000075 sec)
+   passed   2/56  gemini-cli-ide-test-apply-prompt-buffer-restores-window-configuration (0.459230 sec)
+   passed   3/56  gemini-cli-ide-test-at-mentioned-bounds (0.000044 sec)
+   passed   4/56  gemini-cli-ide-test-at-mentioned-completion (0.000131 sec)
+   passed   5/56  gemini-cli-ide-test-at-mentioned-completion-home-path (0.000038 sec)
+   passed   6/56  gemini-cli-ide-test-build-command-with-system-prompt (0.000175 sec)
+   passed   7/56  gemini-cli-ide-test-cancel-prompt-buffer-restores-window-configuration (0.000027 sec)
+Gemini CLI: --version
+emacs-mcp: not running
+   passed   8/56  gemini-cli-ide-test-check-status (0.004882 sec)
+   passed   9/56  gemini-cli-ide-test-cleanup-dead-processes (0.003355 sec)
+  skipped  10/56  gemini-cli-ide-test-concurrent-sessions (0.000049 sec)
+   passed  11/56  gemini-cli-ide-test-custom-buffer-naming (0.000966 sec)
+   passed  12/56  gemini-cli-ide-test-debug-mode-flag (0.000157 sec)
+   passed  13/56  gemini-cli-ide-test-default-buffer-name (0.000034 sec)
+   passed  14/56  gemini-cli-ide-test-detect-cli (0.001999 sec)
+Type your prompt and press C-c C-c to update, or C-c C-k to cancel.
+Type your prompt and press C-c C-c to update, or C-c C-k to cancel.
+Type your prompt and press C-c C-c to update, or C-c C-k to cancel.
+   passed  15/56  gemini-cli-ide-test-edit-prompt-command (0.000268 sec)
+   passed  16/56  gemini-cli-ide-test-emacs-tools-setup-deprecation-warning (0.000029 sec)
+   passed  17/56  gemini-cli-ide-test-ensure-cli (0.001564 sec)
+   passed  18/56  gemini-cli-ide-test-error-handling (0.000191 sec)
+   passed  19/56  gemini-cli-ide-test-filesystem-path-mention-p (0.000019 sec)
+   passed  20/56  gemini-cli-ide-test-get-buffer-name (0.000844 sec)
+   passed  21/56  gemini-cli-ide-test-get-terminal-input (0.000132 sec)
+   passed  22/56  gemini-cli-ide-test-get-terminal-input-eat-metadata (0.000067 sec)
+   passed  23/56  gemini-cli-ide-test-get-terminal-input-robustness (0.000046 sec)
+   passed  24/56  gemini-cli-ide-test-get-terminal-input-vterm-metadata (0.000025 sec)
+   passed  25/56  gemini-cli-ide-test-get-working-directory (0.000698 sec)
+No active Gemini CLI sessions
+   passed  26/56  gemini-cli-ide-test-list-sessions-empty (0.000023 sec)
+No active Gemini CLI sessions
+No active Gemini CLI sessions
+   passed  27/56  gemini-cli-ide-test-list-sessions-with-sessions (0.000032 sec)
+   passed  28/56  gemini-cli-ide-test-obsolete-eat-delay-alias (0.000013 sec)
+   passed  29/56  gemini-cli-ide-test-process-management (0.000704 sec)
+   passed  30/56  gemini-cli-ide-test-prompt-buffer-post-self-insert-triggers-completion (0.000020 sec)
+   passed  31/56  gemini-cli-ide-test-require-emacs-mcp-missing (0.415475 sec)
+   passed  32/56  gemini-cli-ide-test-require-emacs-mcp-old-emacs (0.000052 sec)
+  skipped  33/56  gemini-cli-ide-test-run-existing-session (0.000039 sec)
+  skipped  34/56  gemini-cli-ide-test-run-with-cli (0.000031 sec)
+   passed  35/56  gemini-cli-ide-test-run-without-cli (0.000278 sec)
+   passed  36/56  gemini-cli-ide-test-send-prompt-command (0.529869 sec)
+   passed  37/56  gemini-cli-ide-test-server-refcount-acquire-release (0.000143 sec)
+   passed  38/56  gemini-cli-ide-test-server-refcount-no-touch-when-not-owner (0.000110 sec)
+   passed  39/56  gemini-cli-ide-test-setup-terminal-keybindings (0.000216 sec)
+No Gemini CLI session is running in this directory
+   passed  40/56  gemini-cli-ide-test-stop-no-session (0.003108 sec)
+  skipped  41/56  gemini-cli-ide-test-stop-with-session (0.000097 sec)
+   passed  42/56  gemini-cli-ide-test-strip-terminal-prompt-prefix-decorative-glyph (0.000105 sec)
+   passed  43/56  gemini-cli-ide-test-strip-terminal-ui-suffix (0.000322 sec)
+   passed  44/56  gemini-cli-ide-test-switch-to-buffer-no-session (0.045096 sec)
+   passed  45/56  gemini-cli-ide-test-terminal-backend-selection (0.000038 sec)
+   passed  46/56  gemini-cli-ide-test-terminal-initialization-delay (0.000020 sec)
+   passed  47/56  gemini-cli-ide-test-terminal-send-functions (0.000042 sec)
+   passed  48/56  gemini-cli-ide-test-toggle-vterm-optimization (0.406703 sec)
+  skipped  49/56  gemini-cli-ide-test-toggle-window-functionality (0.000052 sec)
+   passed  50/56  gemini-cli-ide-test-tools-terminal-input-registered (0.000029 sec)
+   passed  51/56  gemini-cli-ide-test-vterm-smart-renderer-batching (0.003670 sec)
+   passed  52/56  gemini-cli-ide-test-vterm-smart-renderer-passthrough (0.002536 sec)
+   passed  53/56  gemini-cli-ide-test-window-placement-options (0.000031 sec)
+   passed  54/56  gemini-cli-ide-test-write-settings-creates-file (0.001221 sec)
+   passed  55/56  gemini-cli-ide-test-write-settings-merges-existing (0.001290 sec)
+   passed  56/56  gemini-cli-ide-test-write-settings-rejects-malformed (0.000667 sec)
+
+Ran 56 tests, 51 results as expected, 0 unexpected, 5 skipped (2026-05-01 15:36:23+1000, 1.889161 sec)
+
+5 skipped results:
+  SKIPPED  gemini-cli-ide-test-concurrent-sessions
+  SKIPPED  gemini-cli-ide-test-run-existing-session
+  SKIPPED  gemini-cli-ide-test-run-with-cli
+  SKIPPED  gemini-cli-ide-test-stop-with-session
+  SKIPPED  gemini-cli-ide-test-toggle-window-functionality
+
+✓ All tests passed!
+
+Cleaning up .elc and .eln files...
