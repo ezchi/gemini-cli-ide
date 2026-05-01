@@ -1,1 +1,5 @@
 .gemini/settings.json
+
+# Steel-Kit ephemeral commands
+.claude/commands/steel-*
+.agents/skills/steel-*

@@ -46,7 +46,8 @@ find_emacs_package() {
         ~/.emacs.d/.cache/straight/repos/"$package" \
         ~/.emacs.d/elpa/"$package"* \
         ~/.config/emacs/.cache/straight/repos/"$package" \
-        ~/.config/emacs/elpa/"$package"*; do
+        ~/.config/emacs/elpa/"$package"* \
+        ~/Projects/"$package"; do
         if [ -d "$dir" ]; then
             echo "$dir"
             return 0
@@ -58,9 +59,9 @@ find_emacs_package() {
 # Build load path for dependencies
 LOAD_PATH="-L ."
 
-# Try to find optional dependencies
-if WEBSOCKET_DIR=$(find_emacs_package "emacs-websocket"); then
-    LOAD_PATH="$LOAD_PATH -L $WEBSOCKET_DIR"
+# Required hard dependency (per Package-Requires).
+if EMACS_MCP_DIR=$(find_emacs_package "emacs-mcp"); then
+    LOAD_PATH="$LOAD_PATH -L $EMACS_MCP_DIR"
 fi
 
 if TRANSIENT_DIR=$(find_emacs_package "transient"); then
@@ -128,7 +129,7 @@ TEST_FAILED=0
 if [ $COMPILE_EXIT_CODE -eq 0 ] && [ $NATIVE_COMPILE_EXIT_CODE -eq 0 ]; then
     echo "" >&2
     echo "=== Running tests ===" >&2
-    emacs -batch -L . -l ert -l gemini-cli-ide-tests.el -f ert-run-tests-batch-and-exit >&2
+    emacs -batch $LOAD_PATH -l ert -l gemini-cli-ide-tests.el -f ert-run-tests-batch-and-exit >&2
     TEST_EXIT_CODE=$?
 
     if [ $TEST_EXIT_CODE -eq 0 ]; then

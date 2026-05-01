@@ -3,9 +3,9 @@
 ;; Copyright (C) 2025
 
 ;; Author: Enze Chi
-;; Version: 0.2.0
-;; Package-Requires: ((emacs "28.1") (websocket "1.12") (transient "0.9.0") (web-server "0.1.2"))
-;; Keywords: ai, gemini, cli, assistant, mcp, websocket
+;; Version: 0.3.0
+;; Package-Requires: ((emacs "29.1") (emacs-mcp "0.1.0") (transient "0.9.0"))
+;; Keywords: ai, gemini, cli, assistant, mcp
 ;; URL: https://github.com/ezchi/gemini-cli-ide.el
 
 ;; This file is not part of GNU Emacs.
@@ -27,20 +27,31 @@
 
 ;; Gemini CLI IDE integration for Emacs provides seamless integration
 ;; with Gemini CLI through the Model Context Protocol (MCP).
-;; It supports file operations, diagnostics, and editor state management.
 ;;
-;; This package starts a WebSocket server that Gemini CLI connects to,
-;; enabling real-time communication between Emacs and Gemini.  It supports
-;; multiple concurrent sessions per project.
+;; This package leverages the `emacs-mcp' dependency to provide a
+;; standardized MCP server, enabling real-time communication between
+;; Emacs and Gemini.  It manages the server lifecycle, automatically
+;; configures project-local settings, and registers Gemini-specific
+;; tools.
+;;
+;; License note: this file is GPL-3.0-or-later (see header above).
+;; The hard dependency `emacs-mcp' is licensed under
+;; AGPL-3.0-or-later.  When this package is distributed or used
+;; together with `emacs-mcp', the resulting combined work is
+;; governed by AGPL-3.0-or-later, including its section 13
+;; obligations regarding network interaction.  See README.md for
+;; the user-facing version of this notice.
 ;;
 ;; Features:
-;; - Automatic IDE mode activation when starting Gemini
-;; - MCP WebSocket server for bidirectional communication
+;; - Streamable HTTP MCP transport (provided by `emacs-mcp')
 ;; - Project-aware sessions with automatic working directory detection
-;; - Clean session management with automatic cleanup on exit
-;; - Selection and buffer state tracking
-;; - Tool support for file operations, diagnostics, and more
-;; - Emacs MCP tools for xref and project navigation
+;; - Project-local `.gemini/settings.json' written on session start so
+;;   Gemini CLI auto-discovers the running `emacs-mcp' endpoint
+;; - Refcounted server lifecycle: this package never stops a server
+;;   that the user (or another package) started independently
+;; - Gemini-specific MCP tool: terminal-input reader so Gemini can see
+;;   what the user is typing in the Gemini terminal buffer before they
+;;   press Enter
 ;;
 ;; Usage:
 ;; M-x gemini-cli-ide - Start Gemini CLI for current project
@@ -49,22 +60,17 @@
 ;; M-x gemini-cli-ide-stop - Stop Gemini CLI for current project
 ;; M-x gemini-cli-ide-switch-to-buffer - Switch to project's Gemini buffer
 ;; M-x gemini-cli-ide-list-sessions - List and switch between all sessions
-;; M-x gemini-cli-ide-check-status - Check CLI availability and version
+;; M-x gemini-cli-ide-check-status - Check CLI and MCP server status
 ;; M-x gemini-cli-ide-insert-at-mentioned - Send selected text to Gemini
-;;
-;; Emacs MCP Tools:
-;; To enable Emacs tools for Gemini, add to your config:
-;;   (gemini-cli-ide-emacs-tools-setup)
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'project)
+(require 'emacs-mcp)
 (require 'gemini-cli-ide-debug)
-(require 'gemini-cli-ide-mcp)
 (require 'gemini-cli-ide-transient)
-(require 'gemini-cli-ide-mcp-server)
-(require 'gemini-cli-ide-emacs-tools)
+(require 'gemini-cli-ide-tools)
 
 ;; External variable declarations for with-editor
 (defvar with-editor-show-usage)
@@ -88,6 +94,7 @@
 (declare-function vterm-send-string "vterm" (string))
 (declare-function vterm-send-escape "vterm" ())
 (declare-function vterm-send-return "vterm" ())
+(declare-function vterm-send-key "vterm" (key &optional shift meta ctrl))
 (declare-function vterm-reset-cursor-point "vterm" ())
 (declare-function vterm--get-cursor-point "vterm" ())
 (declare-function vterm--get-prompt-point "vterm" ())
@@ -140,16 +147,33 @@ Set to nil to disable (default)."
   :group 'gemini-cli-ide)
 
 (defcustom gemini-cli-ide-mcp-allowed-tools 'auto
-  "Configuration for allowed MCP tools when MCP server is enabled.
-Can be one of:
-  `auto' - Automatically allow all configured emacs-tools (default)
-  nil - Disable the --allowedTools flag
-  A string - Custom pattern/tools passed directly to --allowedTools
-  A list of strings - List of specific tool names to allow"
-  :type '(choice (const :tag "Auto (all emacs-tools)" auto)
-                 (const :tag "Disabled" nil)
-                 (string :tag "Custom pattern")
-                 (repeat :tag "Specific tools" string))
+  "Filter for which `emacs-mcp' tools Gemini CLI is told to use.
+Written into `mcpServers.emacs.tools' in the project-local
+`.gemini/settings.json' on every Gemini session start (see
+`gemini-cli-ide--write-gemini-settings').
+
+Allowed values:
+  `auto'           - Omit the `tools' filter entirely; Gemini CLI
+                     sees every tool the running `emacs-mcp' server
+                     advertises.  Recommended default.
+  nil              - Write an empty array (`tools: []').  Gemini CLI
+                     will see no tools.  Useful for testing.
+  A string         - Write a single-element array containing that
+                     string.  The string MUST be the exact MCP-facing
+                     name of an `emacs-mcp' tool.
+  A list of string - Write that list verbatim.  Each string MUST be
+                     the exact MCP-facing name of an `emacs-mcp'
+                     tool.
+
+Note: changes to this variable take effect on the next Gemini
+session start; sessions already running pick up the new filter
+only after their `.gemini/settings.json' is rewritten (which
+happens automatically the next time
+`gemini-cli-ide--write-gemini-settings' runs)."
+  :type '(choice (const :tag "Auto (every tool)" auto)
+                 (const :tag "Disabled (no tools)" nil)
+                 (string :tag "Single tool name")
+                 (repeat :tag "Specific tool names" string))
   :group 'gemini-cli-ide)
 
 (defcustom gemini-cli-ide-window-side 'right
@@ -299,6 +323,171 @@ a more stable viewing experience when working with multiple windows."
 
 (defvar gemini-cli-ide--session-ids (make-hash-table :test 'equal)
   "Hash table mapping project/directory roots to their session IDs.")
+
+;;; emacs-mcp ownership tracking
+
+(defvar-local gemini-cli-ide--owns-mcp-server nil
+  "Non-nil when this Gemini buffer started the active `emacs-mcp' server.
+Buffers whose value is non-nil contribute to
+`gemini-cli-ide--mcp-server-owner-count' and may stop the server
+when their count drops to zero.  Buffers whose value is nil were
+attached to a server that the user (or another package) had
+already started; releasing them never stops that server.")
+
+(defvar gemini-cli-ide--mcp-server-owner-count 0
+  "Number of live Gemini buffers whose `emacs-mcp' server we own.
+Incremented by `gemini-cli-ide--ensure-mcp-server' when this
+package starts the server, decremented by
+`gemini-cli-ide--release-mcp-server'.  When this counter reaches
+zero the package calls `emacs-mcp-stop'.  Always non-negative —
+release is guarded with `(max 0 ...)`.")
+
+(defvar gemini-cli-ide--deprecation-shown nil
+  "Non-nil after `gemini-cli-ide-emacs-tools-setup' has emitted its
+deprecation warning, so the warning fires only once per Emacs
+session.")
+
+;; Forward declarations into emacs-mcp.  These are public, autoloaded,
+;; or otherwise stable in the upstream API; they are required here
+;; because `gemini-cli-ide.el' may byte-compile before the user has
+;; ever called `(require 'emacs-mcp)' interactively.
+(declare-function emacs-mcp-start "emacs-mcp" ())
+(declare-function emacs-mcp-stop "emacs-mcp" ())
+(declare-function emacs-mcp-connection-info "emacs-mcp" ())
+
+;; emacs-mcp's server-wide "default project directory" used as the
+;; fallback when an `initialize' request omits `projectDir'.  We pin
+;; this to each Gemini buffer's project root in `--start-session'
+;; so per-session routing works even when the Gemini CLI client
+;; doesn't pass the param explicitly.
+(defvar emacs-mcp--project-dir)
+
+(defun gemini-cli-ide--require-emacs-mcp ()
+  "Signal `user-error' if `emacs-mcp' or Emacs 29.1 is missing.
+Called at the top of every `gemini-cli-ide' interactive command
+(see NFR-7 / AC-6 of spec 001).  Returns nil on success."
+  (cond
+   ((version< emacs-version "29.1")
+    (user-error
+     "gemini-cli-ide requires Emacs 29.1 or later; this Emacs is %s. \
+Upgrade to Emacs 29.1+ or pin gemini-cli-ide to v0.2.x"
+     emacs-version))
+   ((not (featurep 'emacs-mcp))
+    (user-error
+     "gemini-cli-ide requires the emacs-mcp package, which is not loaded. \
+Install it from https://github.com/ezchi/emacs-mcp and ensure \
+(require 'emacs-mcp) succeeds in your init"))))
+
+(defun gemini-cli-ide--ensure-mcp-server ()
+  "Ensure an `emacs-mcp' server is running.
+Returns t when this call started the server (so the caller is
+expected to mark its terminal buffer as the owner via
+`gemini-cli-ide--owns-mcp-server'), or nil when a server was
+already running (started by the user or another package).
+Increments `gemini-cli-ide--mcp-server-owner-count' iff this call
+started the server.
+
+The caller is responsible for setting the buffer-local
+`gemini-cli-ide--owns-mcp-server' flag on the appropriate Gemini
+terminal buffer when this function returns t — this function
+intentionally does not touch buffer-local state of the calling
+buffer."
+  (if (emacs-mcp-connection-info)
+      nil
+    (emacs-mcp-start)
+    (cl-incf gemini-cli-ide--mcp-server-owner-count)
+    t))
+
+(defun gemini-cli-ide--release-mcp-server ()
+  "Decrement the owner count and stop the server if we own the last one.
+Idempotent — calling twice for the same buffer has no second
+effect because the buffer-local flag is cleared on first release."
+  (when gemini-cli-ide--owns-mcp-server
+    (setq-local gemini-cli-ide--owns-mcp-server nil)
+    (setq gemini-cli-ide--mcp-server-owner-count
+          (max 0 (1- gemini-cli-ide--mcp-server-owner-count)))
+    (when (zerop gemini-cli-ide--mcp-server-owner-count)
+      (emacs-mcp-stop))))
+
+(defun gemini-cli-ide--allowed-tools-filter ()
+  "Translate `gemini-cli-ide-mcp-allowed-tools' into the Gemini settings shape.
+Return value semantics:
+  - nil          → no `tools' key written (Gemini sees every tool).
+  - vector of strings → write that exact list as the filter.
+The defcustom values are interpreted as:
+  `auto'         → return nil (advertise everything; default).
+  nil            → return [] (advertise nothing — testing only).
+  string         → return a one-element vector containing that string.
+  list of strings → return a vector of those strings."
+  (cond
+   ((eq gemini-cli-ide-mcp-allowed-tools 'auto) nil)
+   ((null gemini-cli-ide-mcp-allowed-tools) (vector))
+   ((stringp gemini-cli-ide-mcp-allowed-tools)
+    (vector gemini-cli-ide-mcp-allowed-tools))
+   ((listp gemini-cli-ide-mcp-allowed-tools)
+    (apply #'vector gemini-cli-ide-mcp-allowed-tools))
+   (t nil)))
+
+(defun gemini-cli-ide--write-gemini-settings (project-root)
+  "Merge the `emacs-mcp' endpoint URL into PROJECT-ROOT/.gemini/settings.json.
+Reads the existing file (if any) into a hash table, updates
+`mcpServers.emacs.url' (and optionally `mcpServers.emacs.tools'
+based on `gemini-cli-ide-mcp-allowed-tools'), and writes the
+result back atomically.
+
+Signals `user-error' when:
+  - no `emacs-mcp' server is currently running
+    (`emacs-mcp-connection-info' returned nil), or
+  - the existing settings file is malformed JSON.
+
+Never overwrites a malformed file — that is user data."
+  (let* ((info (or (emacs-mcp-connection-info)
+                   (user-error "No emacs-mcp server is running; cannot \
+write Gemini settings")))
+         (url (alist-get :url info))
+         (settings-dir (expand-file-name ".gemini" project-root))
+         (settings-file (expand-file-name "settings.json" settings-dir))
+         (root
+          (if (file-exists-p settings-file)
+              (condition-case err
+                  (with-temp-buffer
+                    (insert-file-contents settings-file)
+                    (json-parse-buffer
+                     :object-type 'hash-table
+                     :array-type 'array
+                     :null-object :null
+                     :false-object :false))
+                (error
+                 (user-error
+                  "Refusing to overwrite malformed JSON in %s: %s. \
+Fix or delete the file and retry"
+                  settings-file (error-message-string err))))
+            (make-hash-table :test 'equal)))
+         (mcp-servers (or (gethash "mcpServers" root)
+                          (let ((h (make-hash-table :test 'equal)))
+                            (puthash "mcpServers" h root)
+                            h)))
+         (emacs-entry (or (gethash "emacs" mcp-servers)
+                          (let ((h (make-hash-table :test 'equal)))
+                            (puthash "emacs" h mcp-servers)
+                            h)))
+         (tools-filter (gemini-cli-ide--allowed-tools-filter)))
+    (puthash "url" url emacs-entry)
+    (if tools-filter
+        (puthash "tools" tools-filter emacs-entry)
+      (remhash "tools" emacs-entry))
+    (unless (file-directory-p settings-dir)
+      (make-directory settings-dir t))
+    ;; Atomic write: temp file in the target directory, then rename.
+    (let ((tmp (make-temp-file
+                (expand-file-name ".gemini-settings-" settings-dir)
+                nil ".json")))
+      (with-temp-buffer
+        (insert (json-serialize root
+                                :null-object :null
+                                :false-object :false))
+        (write-region (point-min) (point-max) tmp nil 'silent))
+      (rename-file tmp settings-file t))))
 
 ;;; Vterm Rendering Optimization
 
@@ -629,39 +818,39 @@ If `gemini-cli-ide-focus-on-open' is non-nil, the window is selected."
   "Flag to prevent recursive cleanup calls.")
 
 (defun gemini-cli-ide--cleanup-on-exit (directory)
-  "Clean up MCP server and process tracking when Gemini exits for DIRECTORY."
+  "Clean up tracking and `emacs-mcp' ownership when Gemini exits for DIRECTORY.
+Called from the process sentinel and `kill-buffer-hook' on the
+Gemini terminal buffer."
   (unless gemini-cli-ide--cleanup-in-progress
     (setq gemini-cli-ide--cleanup-in-progress t)
     (unwind-protect
         (progn
           ;; Remove from process table
           (remhash directory gemini-cli-ide--processes)
-          ;; Check if this was the last session
+          ;; Remove global advices when no Gemini sessions remain.
           (when (and gemini-cli-ide-prevent-reflow-glitch
                      (= (hash-table-count gemini-cli-ide--processes) 0))
-            ;; Remove advice globally when no sessions remain
             (advice-remove (gemini-cli-ide--terminal-resize-handler)
                            #'gemini-cli-ide--terminal-reflow-filter))
-          ;; Remove vterm rendering optimization if no sessions remain
           (when (and (eq gemini-cli-ide-terminal-backend 'vterm)
                      gemini-cli-ide-vterm-anti-flicker
                      (= (hash-table-count gemini-cli-ide--processes) 0))
             (advice-remove 'vterm--filter #'gemini-cli-ide--vterm-smart-renderer))
-          ;; Stop MCP server for this project directory
-          (gemini-cli-ide-mcp-stop-session directory)
-          ;; Notify MCP tools server about session end with session ID
-          (let ((session-id (gethash directory gemini-cli-ide--session-ids)))
-            (gemini-cli-ide-mcp-server-session-ended session-id)
-            ;; Clean up session ID mapping
-            (when session-id
-              (remhash directory gemini-cli-ide--session-ids)))
-          ;; Kill the vterm buffer if it exists
+          ;; Release the emacs-mcp server claim from the terminal
+          ;; buffer.  `--release-mcp-server' inspects the
+          ;; buffer-local `--owns-mcp-server' flag, decrements the
+          ;; package-global counter, and stops the server when the
+          ;; counter reaches zero AND we owned it.
           (let ((buffer-name (gemini-cli-ide--get-buffer-name directory)))
             (when-let* ((buffer (get-buffer buffer-name)))
               (when (buffer-live-p buffer)
-                (let ((kill-buffer-hook nil) ; Disable hooks to prevent recursion
-                      (kill-buffer-query-functions nil)) ; Don't ask for confirmation
+                (with-current-buffer buffer
+                  (gemini-cli-ide--release-mcp-server))
+                (let ((kill-buffer-hook nil)
+                      (kill-buffer-query-functions nil))
                   (kill-buffer buffer)))))
+          ;; Clean up the session-id mapping.
+          (remhash directory gemini-cli-ide--session-ids)
           (gemini-cli-ide-debug "Cleaned up Gemini CLI session for %s"
                                 (file-name-nondirectory (directory-file-name directory))))
       (setq gemini-cli-ide--cleanup-in-progress nil))))
@@ -683,95 +872,59 @@ If `gemini-cli-ide-focus-on-open' is non-nil, the window is selected."
 
 ;;; Commands
 
-(defun gemini-cli-ide--toggle-existing-window (existing-buffer working-dir)
-  "Toggle visibility of EXISTING-BUFFER window for WORKING-DIR.
+(defun gemini-cli-ide--toggle-existing-window (existing-buffer _working-dir)
+  "Toggle visibility of EXISTING-BUFFER window.
 If the window is visible, it will be hidden.
-If the window is not visible, it will be shown in a side window."
+If the window is not visible, it will be shown in a side window.
+The unused second arg is preserved for source-compatibility with
+v0.2 callers that passed the project's working directory."
   (let ((window (get-buffer-window existing-buffer)))
     (if window
         ;; Window is visible, hide it
         (progn
           (delete-window window)
           (gemini-cli-ide-debug "Gemini CLI window hidden"))
-      ;; Window is not visible, show it
+      ;; Window is not visible, show it.  The "remember the current
+      ;; tab" hook that lived here in v0.2 depended on the bundled
+      ;; MCP session struct (now deleted); behavior is dropped in
+      ;; v0.3.0 along with the other selection / active-editor
+      ;; tracking that emacs-mcp does not expose a hook for (FR-14).
       (progn
         (gemini-cli-ide--display-buffer-in-side-window existing-buffer)
-        ;; Update the original tab when showing the window
-        (when-let* ((session (gemini-cli-ide-mcp--get-session-for-project working-dir)))
-          (when (fboundp 'tab-bar--current-tab)
-            (setf (gemini-cli-ide-mcp-session-original-tab session) (tab-bar--current-tab))))
         (gemini-cli-ide-debug "Gemini CLI window shown")))))
 
-(defun gemini-cli-ide--build-gemini-command (&optional continue resume session-id)
+(defun gemini-cli-ide--build-gemini-command (&optional continue resume)
   "Build the Gemini command with optional flags.
 If CONTINUE is non-nil, add the -c flag.
 If RESUME is non-nil, add the -r flag.
-If SESSION-ID is provided, it's included in the MCP server URL path.
 If `gemini-cli-ide-cli-debug' is non-nil, add the -d flag.
-If `gemini-cli-ide-system-prompt' is non-nil, add the
---append-system-prompt flag.
+If `gemini-cli-ide-system-prompt' is non-nil, that text is appended
+to the Emacs-context system prompt that is always included.
 Additional flags from `gemini-cli-ide-cli-extra-flags' are also
-included."
-  (let ((gemini-cmd gemini-cli-ide-cli-path))
-    ;; Add debug flag if enabled
+included.
+
+The `emacs-mcp' endpoint URL is communicated to Gemini through the
+project-local `.gemini/settings.json' written by
+`gemini-cli-ide--write-gemini-settings'; this function does NOT
+shell out to `gemini mcp add' anymore."
+  (let* ((gemini-cmd gemini-cli-ide-cli-path)
+         (emacs-prompt "IMPORTANT: Connected to Emacs via gemini-cli-ide.el integration. Emacs uses mixed coordinates: Lines: 1-based (line 1 = first line), Columns: 0-based (column 0 = first column). Example: First character in file is at line 1, column 0. Available: xref (LSP), tree-sitter, imenu, project.el, flycheck/flymake diagnostics. Context-aware with automatic project/file/selection tracking.")
+         (combined-prompt
+          (if gemini-cli-ide-system-prompt
+              (concat emacs-prompt "\n\n" gemini-cli-ide-system-prompt)
+            emacs-prompt)))
     (when gemini-cli-ide-cli-debug
       (setq gemini-cmd (concat gemini-cmd " -d")))
-    ;; Add resume flag if requested
     (when resume
       (setq gemini-cmd (concat gemini-cmd " -r")))
-    ;; Add continue flag if requested
     (when continue
       (setq gemini-cmd (concat gemini-cmd " -c")))
-    ;; Add append-system-prompt flag with Emacs context
-    (let ((emacs-prompt "IMPORTANT: Connected to Emacs via gemini-cli-ide.el integration. Emacs uses mixed coordinates: Lines: 1-based (line 1 = first line), Columns: 0-based (column 0 = first column). Example: First character in file is at line 1, column 0. Available: xref (LSP), tree-sitter, imenu, project.el, flycheck/flymake diagnostics. Context-aware with automatic project/file/selection tracking.")
-          (combined-prompt nil))
-      ;; Always include the Emacs-specific prompt
-      (setq combined-prompt emacs-prompt)
-      ;; Append user's custom prompt if set
-      (when gemini-cli-ide-system-prompt
-        (setq combined-prompt (concat combined-prompt "\n\n" gemini-cli-ide-system-prompt)))
-      ;; Add the combined prompt to the command
-      (setq gemini-cmd (concat gemini-cmd " -i "
-                               (shell-quote-argument combined-prompt))))
-    ;; Add any extra flags
+    (setq gemini-cmd (concat gemini-cmd " -i "
+                             (shell-quote-argument combined-prompt)))
     (when (and gemini-cli-ide-cli-extra-flags
                (not (string-empty-p gemini-cli-ide-cli-extra-flags)))
-      (setq gemini-cmd (concat gemini-cmd " " gemini-cli-ide-cli-extra-flags)))
-    ;; Add MCP tools config if enabled
-    (when (gemini-cli-ide-mcp-server-ensure-server)
-      (when-let* ((config (gemini-cli-ide-mcp-server-get-config session-id)))
-        (let* ((mcp-servers (cdr (assoc 'mcpServers config)))
-               (emacs-tools (cdr (assoc 'emacs-tools mcp-servers)))
-               (url (cdr (assoc 'url emacs-tools)))
-               (mcp-setup-cmd "")
-               ;; Build allowedTools flag if configured
-               (allowed-tools
-                (cond
-                 ;; Auto mode: get all emacs-tools names
-                 ((eq gemini-cli-ide-mcp-allowed-tools 'auto)
-                  (mapconcat 'identity (gemini-cli-ide-mcp-server-get-tool-names "mcp__emacs-tools__") ","))
-                 ;; List of specific tools
-                 ((listp gemini-cli-ide-mcp-allowed-tools)
-                  (mapconcat 'identity gemini-cli-ide-mcp-allowed-tools ","))
-                 ;; String pattern or nil
-                 (t gemini-cli-ide-mcp-allowed-tools))))
-
-          (gemini-cli-ide-debug "MCP tools URL: %s" url)
-
-          ;; Use gemini mcp remove/add instead of --mcp-config
-          (setq mcp-setup-cmd
-                (format "%s mcp remove emacs-tools --scope project > /dev/null 2>&1 || true; %s mcp add emacs-tools %s --type http --trust --scope project"
-                        gemini-cli-ide-cli-path
-                        gemini-cli-ide-cli-path
-                        (shell-quote-argument url)))
-
-          ;; Add include-tools if specified
-          (when allowed-tools
-            (setq mcp-setup-cmd
-                  (concat mcp-setup-cmd " --include-tools " (shell-quote-argument allowed-tools))))
-
-          ;; Prepend the setup command to the main command
-          (setq gemini-cmd (format "%s && %s --allowed-mcp-server-names emacs-tools" mcp-setup-cmd gemini-cmd)))))
+      (setq gemini-cmd (concat gemini-cmd " "
+                               gemini-cli-ide-cli-extra-flags)))
     gemini-cmd))
 
 (defun gemini-cli-ide--terminal-position-keeper (window-list)
@@ -810,31 +963,31 @@ and args is a list of arguments."
     (cons (car parts) (cdr parts))))
 
 
-(defun gemini-cli-ide--create-terminal-session (buffer-name working-dir port continue resume session-id)
+(defun gemini-cli-ide--create-terminal-session (buffer-name working-dir continue resume)
   "Create a new terminal session for Gemini CLI.
 BUFFER-NAME is the name for the terminal buffer.
 WORKING-DIR is the working directory.
-PORT is the MCP server port.
 CONTINUE is whether to continue the most recent conversation.
 RESUME is whether to resume a previous conversation.
-SESSION-ID is the unique identifier for this session.
+
+Gemini CLI discovers the running `emacs-mcp' endpoint by reading
+`<WORKING-DIR>/.gemini/settings.json', which the caller is
+expected to have written via
+`gemini-cli-ide--write-gemini-settings' before invoking this
+function.
 
 Returns a cons cell of (buffer . process) on success.
 Signals an error if terminal fails to initialize."
   ;; Ensure terminal backend is available before proceeding
   (gemini-cli-ide--terminal-ensure-backend)
-  (let* ((gemini-cmd (gemini-cli-ide--build-gemini-command continue resume session-id))
+  (let* ((gemini-cmd (gemini-cli-ide--build-gemini-command continue resume))
          (shell-cmd (format "sh -c %s" (shell-quote-argument gemini-cmd)))
          (default-directory working-dir)
-         (env-vars (list (format "GEMINI_CODE_SSE_PORT=%d" port)
-                         "ENABLE_IDE_INTEGRATION=true"
+         (env-vars (list "ENABLE_IDE_INTEGRATION=true"
                          "TERM_PROGRAM=emacs"
                          "FORCE_CODE_TERMINAL=true")))
-    ;; Log the command for debugging
     (gemini-cli-ide-debug "Starting Gemini with command: %s" gemini-cmd)
     (gemini-cli-ide-debug "Working directory: %s" working-dir)
-    (gemini-cli-ide-debug "Environment: GEMINI_CODE_SSE_PORT=%d" port)
-    (gemini-cli-ide-debug "Session ID: %s" session-id)
     (gemini-cli-ide-debug "Terminal backend: %s" gemini-cli-ide-terminal-backend)
 
     (cond
@@ -898,11 +1051,13 @@ If CONTINUE is non-nil, start Gemini with the -c (continue) flag.
 If RESUME is non-nil, start Gemini with the -r (resume) flag.
 
 This function handles:
+- emacs-mcp / Emacs version availability checking
 - CLI availability checking
 - Dead process cleanup
 - Existing session detection and window toggling
-- New session creation with MCP server setup
+- New session creation with emacs-mcp server lifecycle
 - Process and buffer lifecycle management"
+  (gemini-cli-ide--require-emacs-mcp)
   (unless (gemini-cli-ide--ensure-cli)
     (user-error "Gemini CLI CLI not available.  Please install it and ensure it's in PATH"))
 
@@ -921,27 +1076,49 @@ This function handles:
         (gemini-cli-ide--toggle-existing-window existing-buffer working-dir)
       ;; Ensure the selected terminal backend is available before starting MCP
       (gemini-cli-ide--terminal-ensure-backend)
-      ;; Start MCP server with project directory
-      (let ((port nil)
-            (session-id (format "gemini-%s-%s"
-                                (file-name-nondirectory (directory-file-name working-dir))
-                                (format-time-string "%Y%m%d-%H%M%S"))))
-        (condition-case err
-            (progn
-              ;; Start MCP server
-              (setq port (gemini-cli-ide-mcp-start working-dir))
-              ;; Create new terminal session
-              (let* ((buffer-and-process (gemini-cli-ide--create-terminal-session
-                                          buffer-name working-dir port continue resume session-id))
-                     (buffer (car buffer-and-process))
-                     (process (cdr buffer-and-process)))
-                ;; Notify MCP tools server about new session with session info
-                (gemini-cli-ide-mcp-server-session-started session-id working-dir buffer)
-                (gemini-cli-ide-debug "MCP session started with ID: %s in %s"
-                                      session-id (file-name-nondirectory (directory-file-name working-dir)))
-                (gemini-cli-ide--set-process process working-dir)
-                ;; Store session ID for cleanup
-                (puthash working-dir session-id gemini-cli-ide--session-ids)
+      ;; Ensure emacs-mcp server is up and write the project-local
+      ;; .gemini/settings.json so Gemini CLI discovers the endpoint.
+      ;; `we-started-it' is non-nil iff THIS invocation started the
+      ;; server — the terminal buffer below inherits that ownership.
+      (let ((we-started-it (gemini-cli-ide--ensure-mcp-server)))
+        ;; Pin the server's default project dir to this Gemini
+        ;; buffer's project root so the MCP session that Gemini
+        ;; CLI creates via `initialize' (without an explicit
+        ;; `projectDir' param) inherits the right value.
+        ;; emacs-mcp's protocol-layer initialize handler falls
+        ;; back to `emacs-mcp--project-dir' when the request
+        ;; omits `projectDir' (see emacs-mcp-protocol.el:84-89).
+        ;; This is a server-wide knob, so concurrent rapid
+        ;; project starts can race; but it preserves the spec's
+        ;; per-session-project-routing intent for the common
+        ;; sequential workflow.
+        (setq emacs-mcp--project-dir working-dir)
+        (gemini-cli-ide--write-gemini-settings working-dir)
+        (let ((session-id (format "gemini-%s-%s"
+                                  (file-name-nondirectory (directory-file-name working-dir))
+                                  (format-time-string "%Y%m%d-%H%M%S"))))
+          (condition-case err
+              (progn
+                ;; Create new terminal session
+                (let* ((buffer-and-process (gemini-cli-ide--create-terminal-session
+                                            buffer-name working-dir continue resume))
+                       (buffer (car buffer-and-process))
+                       (process (cdr buffer-and-process)))
+                  (gemini-cli-ide-debug "Gemini session started with ID: %s in %s"
+                                        session-id (file-name-nondirectory (directory-file-name working-dir)))
+                  (gemini-cli-ide--set-process process working-dir)
+                  ;; Transfer emacs-mcp ownership from the local
+                  ;; `we-started-it' to the terminal buffer.  Once
+                  ;; the buffer carries the flag, clear the local
+                  ;; var so the error-recovery branch below does
+                  ;; NOT decrement the counter a second time when
+                  ;; the buffer's kill-buffer-hook later fires.
+                  (when we-started-it
+                    (with-current-buffer buffer
+                      (setq-local gemini-cli-ide--owns-mcp-server t))
+                    (setq we-started-it nil))
+                  ;; Store session ID for cleanup
+                  (puthash working-dir session-id gemini-cli-ide--session-ids)
                 ;; Set up process sentinel to clean up when Gemini exits
                 (set-process-sentinel process
                                       (lambda (_proc event)
@@ -956,54 +1133,54 @@ This function handles:
                                                   (string-match "killed" event)
                                                   (string-match "terminated" event))
                                           (gemini-cli-ide--cleanup-on-exit working-dir))))
-                (gemini-cli-ide-debug "Gemini CLI session started in %s with MCP on port %d"
+                  (gemini-cli-ide-debug "Gemini CLI session started in %s"
+                                        (file-name-nondirectory (directory-file-name working-dir)))
+                  ;; Also add buffer kill hook as a backup so we
+                  ;; release the emacs-mcp server on direct
+                  ;; `kill-buffer'.
+                  (with-current-buffer buffer
+                    (add-hook 'kill-buffer-hook
+                              (lambda ()
+                                (gemini-cli-ide--cleanup-on-exit working-dir))
+                              nil t)
+                    ;; Set up terminal keybindings
+                    (gemini-cli-ide--setup-terminal-keybindings)
+                    ;; Add terminal-specific exit hooks
+                    (cond
+                     ((eq gemini-cli-ide-terminal-backend 'vterm)
+                      (add-hook 'vterm-exit-functions
+                                (lambda (&rest _)
+                                  (when (buffer-live-p buffer)
+                                    (kill-buffer buffer)))
+                                nil t))
+                     ((eq gemini-cli-ide-terminal-backend 'eat)
+                      (setq-local eat-kill-buffer-on-exit t))))
+                  ;; Stabilization period for terminal layout initialization
+                  (sleep-for gemini-cli-ide-terminal-initialization-delay)
+                  ;; Display the buffer in a side window
+                  (gemini-cli-ide--display-buffer-in-side-window buffer)
+                  (gemini-cli-ide-log "Gemini CLI %sstarted in %s%s"
+                                      (cond (continue "continued and ")
+                                            (resume "resumed and ")
+                                            (t ""))
                                       (file-name-nondirectory (directory-file-name working-dir))
-                                      port)
-                ;; Also add buffer kill hook as a backup
-                (with-current-buffer buffer
-                  (add-hook 'kill-buffer-hook
-                            (lambda ()
-                              (gemini-cli-ide--cleanup-on-exit working-dir))
-                            nil t)
-                  ;; Set up terminal keybindings
-                  (gemini-cli-ide--setup-terminal-keybindings)
-                  ;; Add terminal-specific exit hooks
-                  (cond
-                   ((eq gemini-cli-ide-terminal-backend 'vterm)
-                    ;; Add vterm exit hook to ensure buffer is killed when process exits
-                    ;; vterm runs Gemini directly, no shell involved
-                    (add-hook 'vterm-exit-functions
-                              (lambda (&rest _)
-                                (when (buffer-live-p buffer)
-                                  (kill-buffer buffer)))
-                              nil t))
-                   ((eq gemini-cli-ide-terminal-backend 'eat)
-                    ;; eat uses kill-buffer-on-exit variable
-                    (setq-local eat-kill-buffer-on-exit t))))
-                ;; Stabilization period for terminal layout initialization
-                (sleep-for gemini-cli-ide-terminal-initialization-delay)
-                ;; Display the buffer in a side window
-                (gemini-cli-ide--display-buffer-in-side-window buffer)
-                (gemini-cli-ide-log "Gemini CLI %sstarted in %s with MCP on port %d%s"
-                                    (cond (continue "continued and ")
-                                          (resume "resumed and ")
-                                          (t ""))
-                                    (file-name-nondirectory (directory-file-name working-dir))
-                                    port
-                                    (if gemini-cli-ide-cli-debug " (debug mode enabled)" ""))))
-          (error
-           ;; Terminal session creation failed - clean up MCP server
-           (when port
-             (gemini-cli-ide-mcp-stop-session working-dir))
-           ;; Notify MCP tools server that session ended (to decrement count)
-           (gemini-cli-ide-mcp-server-session-ended session-id)
-           ;; Re-signal the error with improved message
-           (signal (car err) (cdr err))))))))
+                                      (if gemini-cli-ide-cli-debug " (debug mode enabled)" ""))))
+            (error
+             ;; Terminal session creation failed.  If THIS call is
+             ;; what brought up the emacs-mcp server, release it so
+             ;; we don't leave a zombie running.
+             (when we-started-it
+               (setq gemini-cli-ide--mcp-server-owner-count
+                     (max 0 (1- gemini-cli-ide--mcp-server-owner-count)))
+               (when (zerop gemini-cli-ide--mcp-server-owner-count)
+                 (emacs-mcp-stop)))
+             (signal (car err) (cdr err)))))))))
 
 ;;;###autoload
 (defun gemini-cli-ide ()
   "Run Gemini CLI in a terminal for the current project or directory."
   (interactive)
+  (gemini-cli-ide--require-emacs-mcp)
   (gemini-cli-ide--start-session))
 
 ;;;###autoload
@@ -1012,6 +1189,7 @@ This function handles:
 This starts Gemini with the -r (resume) flag to continue the previous
 conversation."
   (interactive)
+  (gemini-cli-ide--require-emacs-mcp)
   (gemini-cli-ide--start-session nil t))
 
 ;;;###autoload
@@ -1020,31 +1198,43 @@ conversation."
 This starts Gemini with the -c (continue) flag to continue the most recent
 conversation in the current directory."
   (interactive)
+  (gemini-cli-ide--require-emacs-mcp)
   (gemini-cli-ide--start-session t))
 
 ;;;###autoload
 (defun gemini-cli-ide-check-status ()
-  "Check Gemini CLI CLI status."
+  "Check Gemini CLI and `emacs-mcp' status for the current project."
   (interactive)
+  (gemini-cli-ide--require-emacs-mcp)
   (gemini-cli-ide--detect-cli)
-  (if gemini-cli-ide--cli-available
-      (let ((version-output
-             (with-temp-buffer
-               (call-process gemini-cli-ide-cli-path nil t nil "--version")
-               (buffer-string))))
-        (gemini-cli-ide-log "Gemini CLI CLI version: %s" (string-trim version-output)))
-    (gemini-cli-ide-log "Gemini CLI is not installed.")))
+  (let* ((cli-line
+          (if gemini-cli-ide--cli-available
+              (let ((version-output
+                     (with-temp-buffer
+                       (call-process gemini-cli-ide-cli-path nil t nil "--version")
+                       (buffer-string))))
+                (format "Gemini CLI: %s" (string-trim version-output)))
+            "Gemini CLI: not installed"))
+         (info (emacs-mcp-connection-info))
+         (mcp-line (if info
+                       (format "emacs-mcp: %s" (alist-get :url info))
+                     "emacs-mcp: not running")))
+    (gemini-cli-ide-log "%s\n%s" cli-line mcp-line)))
 
 ;;;###autoload
 (defun gemini-cli-ide-stop ()
   "Stop the Gemini CLI session for the current project or directory."
   (interactive)
+  (gemini-cli-ide--require-emacs-mcp)
   (let* ((working-dir (gemini-cli-ide--get-working-directory))
          (buffer-name (gemini-cli-ide--get-buffer-name)))
     (if-let* ((buffer (get-buffer buffer-name)))
         (progn
-          ;; Kill the buffer (cleanup will be handled by hooks)
-          ;; The process sentinel will handle cleanup when the process dies
+          ;; Kill the buffer.  `kill-buffer-hook' chains to
+          ;; `gemini-cli-ide--cleanup-on-exit', which calls
+          ;; `gemini-cli-ide--release-mcp-server' on the buffer
+          ;; before the buffer is killed — that releases our claim
+          ;; on the emacs-mcp server.
           (kill-buffer buffer)
           (gemini-cli-ide-log "Stopping Gemini CLI in %s..."
                               (file-name-nondirectory (directory-file-name working-dir))))
@@ -1057,6 +1247,7 @@ conversation in the current directory."
 If the buffer is not visible, display it in the configured side window.
 If the buffer is already visible, switch focus to it."
   (interactive)
+  (gemini-cli-ide--require-emacs-mcp)
   (let ((buffer-name (gemini-cli-ide--get-buffer-name)))
     (if-let* ((buffer (get-buffer buffer-name)))
         (if-let* ((window (get-buffer-window buffer)))
@@ -1070,6 +1261,7 @@ If the buffer is already visible, switch focus to it."
 (defun gemini-cli-ide-list-sessions ()
   "List all active Gemini CLI sessions and switch to selected one."
   (interactive)
+  (gemini-cli-ide--require-emacs-mcp)
   (gemini-cli-ide--cleanup-dead-processes)
   (let ((sessions '()))
     (maphash (lambda (directory _)
@@ -1090,15 +1282,44 @@ If the buffer is already visible, switch focus to it."
 
 ;;;###autoload
 (defun gemini-cli-ide-insert-at-mentioned ()
-  "Insert selected text into Gemini prompt."
+  "Send the active region to the project's Gemini CLI terminal buffer.
+The text is typed into the terminal as if the user had pasted it,
+without sending Return.  The user can then review and submit."
   (interactive)
-  (if-let* ((project-dir (gemini-cli-ide-mcp--get-buffer-project))
-            (session (gemini-cli-ide-mcp--get-session-for-project project-dir))
-            (client (gemini-cli-ide-mcp-session-client session)))
-      (progn
-        (gemini-cli-ide-mcp-send-at-mentioned)
-        (gemini-cli-ide-debug "Sent selection to Gemini CLI"))
-    (user-error "Gemini CLI is not connected.  Please start Gemini CLI first")))
+  (gemini-cli-ide--require-emacs-mcp)
+  (unless (use-region-p)
+    (user-error "No active region; mark some text first"))
+  (let* ((selection (buffer-substring-no-properties
+                     (region-beginning) (region-end)))
+         (working-dir (gemini-cli-ide--get-working-directory))
+         (buffer-name (gemini-cli-ide--get-buffer-name working-dir))
+         (buffer (get-buffer buffer-name)))
+    (unless (and buffer (buffer-live-p buffer))
+      (user-error
+       "No Gemini CLI session for this project; start one with M-x gemini-cli-ide"))
+    (with-current-buffer buffer
+      (gemini-cli-ide--terminal-send-string selection))
+    (gemini-cli-ide-debug "Inserted %d-character selection into Gemini terminal"
+                          (length selection))))
+
+;;;###autoload
+(defun gemini-cli-ide-emacs-tools-setup ()
+  "Deprecation shim for the removed tool-installer (FR-13).
+In v0.2.x this function registered Gemini-specific MCP tools into a
+bundled MCP server.  Starting in v0.3.0 the MCP server lives in the
+external `emacs-mcp' package, and this package's tools auto-register
+when `gemini-cli-ide-tools' is loaded.  This shim emits a one-time
+deprecation warning and does nothing else.  It will be removed in
+v0.4.0."
+  (interactive)
+  (unless gemini-cli-ide--deprecation-shown
+    (setq gemini-cli-ide--deprecation-shown t)
+    (display-warning
+     'gemini-cli-ide
+     "gemini-cli-ide-emacs-tools-setup is deprecated. Use \
+`(emacs-mcp-mode 1)' and require 'gemini-cli-ide instead. Will be \
+removed in v0.4.0."
+     :warning)))
 
 ;;;###autoload
 (defun gemini-cli-ide-send-escape ()

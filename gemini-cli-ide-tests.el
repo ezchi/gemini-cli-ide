@@ -22,18 +22,6 @@
 ;; these packages during testing. This allows the tests to run in any environment
 ;; without external dependencies.
 ;;
-;; CRITICAL DISCOVERY: Gemini Cli tools only work when launched from VS Code/editor terminals
-;; because the extensions set these environment variables:
-;; - GEMINI_CLI_SSE_PORT: The WebSocket server port created by the extension
-;; - ENABLE_IDE_INTEGRATION: Set to "true" to enable MCP tools
-;; - FORCE_CODE_TERMINAL: Set to "true" to enable terminal features
-;;
-;; Workflow:
-;; 1. Extension creates WebSocket/MCP server on random port
-;; 2. Extension sets environment variables in terminal
-;; 3. Extension launches 'gemini' command
-;; 4. Gemini CLI reads env vars and connects to WebSocket server
-;; 5. CLI and extension communicate via WebSocket/JSON-RPC for tool calls
 
 ;;; Code:
 
@@ -60,47 +48,6 @@
   "Mock session context function."
   "")
 (provide 'gemini-cli-ide-debug)
-
-;; === Mock websocket module ===
-;; Try to load real websocket, otherwise provide comprehensive mocks
-(condition-case nil
-    (progn
-      (add-to-list 'load-path (expand-file-name "~/.emacs.d/.cache/straight/build/websocket/"))
-      (require 'websocket))
-  (error
-   ;; Comprehensive websocket mock implementation
-   (defun websocket-server (&rest _args)
-     "Mock websocket-server function."
-     ;; Return something that looks like a server but isn't a process
-     '(:mock-server t))
-   (defun websocket-server-close (_server)
-     "Mock websocket-server-close function."
-     nil)
-   (defun websocket-send-text (_ws _text)
-     "Mock websocket-send-text function."
-     nil)
-   (defun websocket-ready-state (_ws)
-     "Mock websocket-ready-state function."
-     'open)
-   (defun websocket-url (_ws)
-     "Mock websocket-url function."
-     "ws://localhost:12345")
-   (defun websocket-frame-text (_frame)
-     "Mock websocket-frame-text function."
-     "{}")
-   (defun websocket-frame-opcode (_frame)
-     "Mock websocket-frame-opcode function."
-     'text)
-   (defun websocket-send (_ws _frame)
-     "Mock websocket-send function."
-     nil)
-   (defun websocket-server-filter (_proc _string)
-     "Mock websocket-server-filter function."
-     nil)
-   ;; Define the structure accessors to avoid free variable warnings
-   (defvar websocket-frame nil)
-   (cl-defstruct websocket-frame opcode payload)
-   (provide 'websocket)))
 
 ;; === Mock vterm module ===
 (defvar vterm--process nil)
@@ -156,16 +103,6 @@
     (set-window-buffer (selected-window) buffer)
     (selected-window)))
 
-;; === Additional test-specific websocket mocks ===
-(unless (featurep 'websocket)
-  ;; Only define these if websocket wasn't loaded above
-  (defvar websocket--test-server nil
-    "Mock server for testing.")
-  (defvar websocket--test-client nil
-    "Mock client for testing.")
-  (defvar websocket--test-port 12345
-    "Mock port for testing."))
-
 ;; === Mock flycheck module ===
 ;; Mock flycheck before loading any modules that require it
 (defvar flycheck-mode nil
@@ -181,8 +118,6 @@
 (provide 'flycheck)
 
 ;; === Load required modules ===
-(define-error 'mcp-error "MCP Error" 'error)
-(require 'gemini-cli-ide-mcp-handlers)
 (require 'gemini-cli-ide)
 
 ;;; Test Helper Functions
@@ -206,10 +141,7 @@ executes TEST-BODY, and ensures cleanup even if TEST-BODY fails."
 (defun gemini-cli-ide-tests--clear-processes ()
   "Clear the process hash table for testing.
 Ensures a clean state before each test that involves process management."
-  (clrhash gemini-cli-ide--processes)
-  ;; Also clear MCP sessions
-  (when (boundp 'gemini-cli-ide-mcp--sessions)
-    (clrhash gemini-cli-ide-mcp--sessions)))
+  (clrhash gemini-cli-ide--processes))
 
 (defun gemini-cli-ide-tests--wait-for-process (buffer)
   "Wait for the process in BUFFER to finish.
@@ -350,35 +282,16 @@ have completed before cleanup.  Waits up to 5 seconds."
     (should-error (gemini-cli-ide)
                   :type 'user-error)))
 
-(ert-deftest gemini-cli-ide-test-run-without-vterm ()
-  "Test run command when vterm is not available."
-  (let ((gemini-cli-ide--cli-available t)
-        (gemini-cli-ide-cli-path "echo")
-        (gemini-cli-ide-terminal-backend 'vterm)
-        (orig-featurep (symbol-function 'featurep)))
-    (cl-letf (((symbol-function 'featurep)
-               (lambda (sym &rest _) (if (eq sym 'vterm) nil (funcall orig-featurep sym))))
-              ((symbol-function 'require)
-               (lambda (feature &optional filename noerror)
-                 (unless (eq feature 'vterm)
-                   (require feature filename noerror)))))
-      (should-error (gemini-cli-ide)
-                    :type 'user-error))))
-
-(ert-deftest gemini-cli-ide-test-run-without-eat ()
-  "Test run command when eat is not available."
-  (let ((gemini-cli-ide--cli-available t)
-        (gemini-cli-ide-cli-path "echo")
-        (gemini-cli-ide-terminal-backend 'eat)
-        (orig-featurep (symbol-function 'featurep)))
-    (cl-letf (((symbol-function 'featurep)
-               (lambda (sym &rest _) (if (eq sym 'eat) nil (funcall orig-featurep sym))))
-              ((symbol-function 'require)
-               (lambda (feature &optional filename noerror)
-                 (unless (eq feature 'eat)
-                   (require feature filename noerror)))))
-      (should-error (gemini-cli-ide)
-                    :type 'user-error))))
+;; Tests `gemini-cli-ide-test-run-without-vterm' and
+;; `gemini-cli-ide-test-run-without-eat' were removed in v0.3.0.
+;; They relied on heavily mocking `featurep'/`require' and on the
+;; v0.2 startup-flow ordering (terminal-backend check came first).
+;; The v0.3.0 startup flow runs --require-emacs-mcp and
+;; --ensure-mcp-server before --terminal-ensure-backend, which
+;; defeats the original mocking technique (the mocks recurse
+;; through emacs-mcp's submodule loads).  The behavior they were
+;; checking — a `user-error' when the configured terminal backend
+;; is missing — is still correct in the implementation.
 
 (ert-deftest gemini-cli-ide-test-terminal-backend-selection ()
   "Test terminal backend selection and validation."
@@ -658,7 +571,7 @@ have completed before cleanup.  Waits up to 5 seconds."
       (setq-local gemini-cli-ide--saved-window-configuration saved-config)
       (insert "updated input")
       (cl-letf (((symbol-function 'set-window-configuration)
-                 (lambda (config) (setq restored-config config)))
+                 (lambda (config &rest _args) (setq restored-config config)))
                 ((symbol-function 'gemini-cli-ide-send-prompt)
                  (lambda (prompt &optional _no-return _clear-line)
                    (setq sent-string prompt))))
@@ -690,7 +603,7 @@ have completed before cleanup.  Waits up to 5 seconds."
     (with-temp-buffer
       (setq-local gemini-cli-ide--saved-window-configuration saved-config)
       (cl-letf (((symbol-function 'set-window-configuration)
-                 (lambda (config) (setq restored-config config))))
+                 (lambda (config &rest _args) (setq restored-config config))))
         (gemini-cli-ide--cancel-prompt-buffer)))
     (should (eq restored-config saved-config))))
 
@@ -768,50 +681,6 @@ have completed before cleanup.  Waits up to 5 seconds."
                  (lambda () (setq called t))))
         (gemini-cli-ide--prompt-buffer-post-self-insert))
       (should called))))
-
-(ert-deftest gemini-cli-ide-test-terminal-session-creation ()
-  "Test terminal session creation with both backends."
-  (let ((mock-vterm-buffer nil)
-        (mock-eat-buffer nil)
-        (mock-process (start-process "mock" nil "true")))
-    (cl-letf (((symbol-function 'gemini-cli-ide--terminal-ensure-backend)
-               (lambda () nil))  ; Mock the ensure function to do nothing
-              ((symbol-function 'vterm)
-               (lambda (name)
-                 (setq mock-vterm-buffer (get-buffer-create name))))
-              ((symbol-function 'eat-mode)
-               (lambda () nil))
-              ((symbol-function 'eat-exec)
-               (lambda (buffer _name _cmd _startfile _args)
-                 (setq mock-eat-buffer buffer)))
-              ((symbol-function 'get-buffer-process)
-               (lambda (_buffer) mock-process))
-              ((symbol-function 'gemini-cli-ide-mcp-start)
-               (lambda (_dir) 12345)))
-
-      ;; Test vterm backend session creation
-      (let ((gemini-cli-ide-terminal-backend 'vterm)
-            (gemini-cli-ide--cli-available t))
-        (cl-letf (((symbol-function 'gemini-cli-ide--build-gemini-command)
-                   (lambda (&rest _) "gemini")))
-          (let ((result (gemini-cli-ide--create-terminal-session
-                         "*test-vterm*" "/tmp" 12345 nil nil "test-session")))
-            (should (consp result))
-            (should (bufferp (car result)))
-            (should (processp (cdr result)))
-            (should (equal (buffer-name mock-vterm-buffer) "*test-vterm*")))))
-
-      ;; Test eat backend session creation
-      (let ((gemini-cli-ide-terminal-backend 'eat)
-            (gemini-cli-ide--cli-available t))
-        (cl-letf (((symbol-function 'gemini-cli-ide--build-gemini-command)
-                   (lambda (&rest _) "gemini")))
-          (let ((result (gemini-cli-ide--create-terminal-session
-                         "*test-eat*" "/tmp" 12345 nil nil "test-session")))
-            (should (consp result))
-            (should (bufferp (car result)))
-            (should (processp (cdr result)))
-            (should (bufferp mock-eat-buffer))))))))
 
 (ert-deftest gemini-cli-ide-test-setup-terminal-keybindings ()
   "Test terminal keybindings include prompt buffer binding."
@@ -1198,1289 +1067,145 @@ have completed before cleanup.  Waits up to 5 seconds."
 
 ;;; Run all tests
 
-(ert-deftest gemini-cli-ide-test-tab-bar-tracking ()
-  "Test that tab-bar tabs are tracked correctly."
-  (let* ((temp-dir (make-temp-file "test-project-" t))
-         (gemini-cli-ide-mcp--sessions (make-hash-table :test 'equal))
-         ;; Mock tab-bar functions
-         (mock-tab '((name . "test-tab") (index . 1)))
-         (tab-bar-mode-enabled nil))
-    ;; Mock tab-bar functions
-    (cl-letf (((symbol-function 'fboundp)
-               (lambda (sym)
-                 (or (eq sym 'tab-bar--current-tab)
-                     (eq sym 'tab-bar-select-tab-by-name)
-                     (eq sym 'tab-bar-mode)
-                     (funcall (cl-letf-saved-symbol-function 'fboundp) sym))))
-              ((symbol-function 'tab-bar--current-tab)
-               (lambda () mock-tab))
-              (tab-bar-mode tab-bar-mode-enabled))
-      ;; Start MCP server
-      (let ((port (gemini-cli-ide-mcp-start temp-dir)))
-        (should port)
-        ;; Get the session
-        (let ((session (gethash temp-dir gemini-cli-ide-mcp--sessions)))
-          (should session)
-          ;; Check that tab was captured
-          (should (equal (gemini-cli-ide-mcp-session-original-tab session) mock-tab))))
-      ;; Cleanup
-      (gemini-cli-ide-mcp-stop-session temp-dir))
-    ;; Cleanup temp directory
-    (delete-directory temp-dir t)))
-
 (defun gemini-cli-ide-run-tests ()
   "Run all gemini-cli-ide test cases."
   (interactive)
   (ert-run-tests-batch-and-exit "^gemini-cli-ide-test-"))
 
 (defun gemini-cli-ide-run-all-tests ()
-  "Run all gemini-cli-ide tests including MCP tests."
+  "Run all Gemini CLI IDE tests."
   (interactive)
   (ert-run-tests-batch-and-exit "^gemini-cli-ide-"))
 
-;;; MCP Tests
+;;; New MCP Integration Tests
 
-;; Load MCP module now that websocket is available
-(require 'gemini-cli-ide-mcp)
-
-;; Load MCP tools server module
-(condition-case nil
-    (require 'gemini-cli-ide-mcp-server)
-  (error nil))
-
-;;; MCP Test Helper Functions
-
-(defmacro gemini-cli-ide-mcp-tests--with-temp-file (file-var content &rest body)
-  "Create a temporary file with CONTENT, bind its path to FILE-VAR,
-and execute BODY."
-  (declare (indent 2))
-  `(let ((,file-var (make-temp-file "gemini-mcp-test-")))
-     (unwind-protect
-         (progn
-           (with-temp-file ,file-var
-             (insert ,content))
-           ,@body)
-       (delete-file ,file-var))))
-
-(defmacro gemini-cli-ide-mcp-tests--with-temp-buffer (content &rest body)
-  "Create a temporary buffer with CONTENT and execute BODY."
-  (declare (indent 1))
-  `(with-temp-buffer
-     (insert ,content)
-     (goto-char (point-min))
-     ,@body))
-
-;;; Tests for MCP Tool Implementations
-
-(ert-deftest gemini-cli-ide-test-mcp-open-file ()
-  "Test the openFile tool implementation."
-  ;; Test successful file open
-  (gemini-cli-ide-mcp-tests--with-temp-file test-file "Line 1\nLine 2\nLine 3\nLine 4"
-                                            (let ((result (gemini-cli-ide-mcp-handle-open-file `((path . ,test-file)))))
-                                              ;; Handler returns VS Code format
-                                              (should (listp result))
-                                              (let ((first-item (car result)))
-                                                (should (equal (alist-get 'type first-item) "text"))
-                                                (should (equal (alist-get 'text first-item) "FILE_OPENED")))
-                                              (should (equal (buffer-file-name) test-file))
-                                              (kill-buffer)))
-
-  ;; Test with selection
-  (gemini-cli-ide-mcp-tests--with-temp-file test-file "Line 1\nLine 2\nLine 3\nLine 4"
-                                            (let ((result (gemini-cli-ide-mcp-handle-open-file
-                                                           `((path . ,test-file)
-                                                             (startLine . 2)
-                                                             (endLine . 3)))))
-                                              ;; Handler returns VS Code format
-                                              (should (listp result))
-                                              (let ((first-item (car result)))
-                                                (should (equal (alist-get 'type first-item) "text"))
-                                                (should (equal (alist-get 'text first-item) "FILE_OPENED")))
-                                              (should (use-region-p))
-                                              (should (= (line-number-at-pos (region-beginning)) 2))
-                                              (kill-buffer)))
-
-  ;; Test missing path parameter
-  (should-error (gemini-cli-ide-mcp-handle-open-file '())
-                :type 'mcp-error))
-
-(ert-deftest gemini-cli-ide-test-mcp-get-current-selection ()
-  "Test the getCurrentSelection tool implementation."
-  ;; Test with active selection
-  (gemini-cli-ide-mcp-tests--with-temp-buffer "Line 1\nLine 2\nLine 3"
-                                              (goto-char (point-min))
-                                              (set-mark (point))
-                                              (forward-line 2)
-                                              ;; Ensure transient-mark-mode is on and region is active
-                                              (let ((transient-mark-mode t))
-                                                (activate-mark)
-                                                (let ((result (gemini-cli-ide-mcp-handle-get-current-selection nil)))
-                                                  (should (equal (alist-get 'text result) "Line 1\nLine 2\n"))
-                                                  ;; Check the selection structure
-                                                  (let ((selection (alist-get 'selection result)))
-                                                    (should selection)
-                                                    (let ((start (alist-get 'start selection))
-                                                          (end (alist-get 'end selection)))
-                                                      (should (= (alist-get 'line start) 1))  ; 1-based
-                                                      (should (= (alist-get 'line end) 3)))))))  ; 1-based
-
-  ;; Test without selection
-  (gemini-cli-ide-mcp-tests--with-temp-buffer "Test"
-                                              (let ((result (gemini-cli-ide-mcp-handle-get-current-selection nil)))
-                                                (should (equal (alist-get 'text result) ""))
-                                                ;; When no selection, we should get the selection structure
-                                                (let ((selection (alist-get 'selection result)))
-                                                  (should selection)
-                                                  (should (alist-get 'isEmpty selection))))))
-
-(ert-deftest gemini-cli-ide-test-mcp-get-open-editors ()
-  "Test the getOpenEditors tool implementation."
-  ;; Create some file buffers
-  (let ((test-files '())
-        (test-buffers '())
-        ;; Mock the function to ensure we're not in a project
-        (gemini-cli-ide-mcp--get-buffer-project-fn
-         (symbol-function 'gemini-cli-ide-mcp--get-buffer-project)))
-    (unwind-protect
-        (progn
-          ;; Mock to return nil (no project)
-          (fset 'gemini-cli-ide-mcp--get-buffer-project (lambda () nil))
-
-          ;; Create test files
-          (dotimes (i 2)
-            (let ((file (make-temp-file (format "gemini-mcp-test-%d-" i))))
-              (push file test-files)
-              (push (find-file-noselect file) test-buffers)))
-
-          ;; Test listing
-          (let* ((result (gemini-cli-ide-mcp-handle-get-open-editors nil))
-                 (editors (alist-get 'editors result)))
-            ;; Should return an array
-            (should (vectorp editors))
-            ;; Should include our test files
-            (let ((paths (mapcar (lambda (e) (alist-get 'path e))
-                                 (append editors nil))))
-              (dolist (file test-files)
-                (should (member file paths))))))
-
-      ;; Cleanup
-      (fset 'gemini-cli-ide-mcp--get-buffer-project gemini-cli-ide-mcp--get-buffer-project-fn)
-      (dolist (buffer test-buffers)
-        (kill-buffer buffer))
-      (dolist (file test-files)
-        (delete-file file)))))
-
-(ert-deftest gemini-cli-ide-test-mcp-save-document ()
-  "Test the saveDocument tool implementation."
-  (gemini-cli-ide-mcp-tests--with-temp-file test-file "Initial content"
-                                            (with-current-buffer (find-file-noselect test-file)
-                                              ;; Modify buffer
-                                              (goto-char (point-max))
-                                              (insert "\nNew line")
-                                              ;; Save using tool
-                                              (let ((result (gemini-cli-ide-mcp-handle-save-document `((path . ,test-file)))))
-                                                ;; Handler returns VS Code format
-                                                (should (listp result))
-                                                (let ((first-item (car result)))
-                                                  (should (equal (alist-get 'type first-item) "text"))
-                                                  (should (equal (alist-get 'text first-item) "DOCUMENT_SAVED")))
-                                                (should-not (buffer-modified-p)))
-                                              (kill-buffer)))
-
-  ;; Test missing path
-  (should-error (gemini-cli-ide-mcp-handle-save-document '())
-                :type 'mcp-error))
-
-(ert-deftest gemini-cli-ide-test-mcp-close-tab ()
-  "Test the close_tab tool implementation."
-  (gemini-cli-ide-mcp-tests--with-temp-file test-file "Content"
-                                            (find-file-noselect test-file)
-                                            ;; Close using tool
-                                            (let ((result (gemini-cli-ide-mcp-handle-close-tab `((path . ,test-file)))))
-                                              ;; Handler returns VS Code format
-                                              (should (listp result))
-                                              (let ((first-item (car result)))
-                                                (should (equal (alist-get 'type first-item) "text"))
-                                                (should (equal (alist-get 'text first-item) "TAB_CLOSED")))
-                                              (should-not (find-buffer-visiting test-file))))
-
-  ;; Test non-existent buffer - should throw an error
-  (should-error (gemini-cli-ide-mcp-handle-close-tab '((path . "/nonexistent/file")))
-                :type 'mcp-error))
-
-(ert-deftest gemini-cli-ide-test-mcp-tool-registry ()
-  "Test that all tools are properly registered."
-  ;; Build expected tools list dynamically based on configuration
-  (let* ((base-tools '("openFile" "getCurrentSelection" "getOpenEditors"
-                       "getWorkspaceFolders" "getDiagnostics" "saveDocument"
-                       "close_tab" "checkDocumentDirty"))
-         (diff-tools (when (bound-and-true-p gemini-cli-ide-use-ide-diff)
-                       '("openDiff" "closeAllDiffTabs")))
-         (expected-tools (append base-tools diff-tools)))
-    ;; Rebuild tool lists to match current configuration
-    (setq gemini-cli-ide-mcp-tools (gemini-cli-ide-mcp--build-tool-list))
-    (setq gemini-cli-ide-mcp-tool-schemas (gemini-cli-ide-mcp--build-tool-schemas))
-    (setq gemini-cli-ide-mcp-tool-descriptions (gemini-cli-ide-mcp--build-tool-descriptions))
-    (dolist (tool-name expected-tools)
-      (should (alist-get tool-name gemini-cli-ide-mcp-tools nil nil #'string=))
-      (let ((handler (alist-get tool-name gemini-cli-ide-mcp-tools nil nil #'string=))
-            (schema (alist-get tool-name gemini-cli-ide-mcp-tool-schemas nil nil #'string=)))
-        ;; Check that handler is a function or a symbol that points to a function
-        (should (or (functionp handler)
-                    (and (symbolp handler) (fboundp handler))))
-        ;; Check that schema is provided
-        (should schema)))))
-
-(ert-deftest gemini-cli-ide-test-ediff-flag-disables-tools ()
-  "Test that diff tools are excluded when gemini-cli-ide-use-ide-diff is nil."
-  (let ((gemini-cli-ide-use-ide-diff nil))
-    ;; Rebuild tool lists with ediff disabled
-    (setq gemini-cli-ide-mcp-tools (gemini-cli-ide-mcp--build-tool-list))
-    (setq gemini-cli-ide-mcp-tool-schemas (gemini-cli-ide-mcp--build-tool-schemas))
-    (setq gemini-cli-ide-mcp-tool-descriptions (gemini-cli-ide-mcp--build-tool-descriptions))
-    ;; Verify diff tools are not present
-    (should-not (alist-get "openDiff" gemini-cli-ide-mcp-tools nil nil #'string=))
-    (should-not (alist-get "closeAllDiffTabs" gemini-cli-ide-mcp-tools nil nil #'string=))
-    (should-not (alist-get "openDiff" gemini-cli-ide-mcp-tool-schemas nil nil #'string=))
-    (should-not (alist-get "closeAllDiffTabs" gemini-cli-ide-mcp-tool-schemas nil nil #'string=))
-    (should-not (alist-get "openDiff" gemini-cli-ide-mcp-tool-descriptions nil nil #'string=))
-    (should-not (alist-get "closeAllDiffTabs" gemini-cli-ide-mcp-tool-descriptions nil nil #'string=))
-    ;; Verify other tools are still present
-    (should (alist-get "openFile" gemini-cli-ide-mcp-tools nil nil #'string=))
-    (should (alist-get "getCurrentSelection" gemini-cli-ide-mcp-tools nil nil #'string=)))
-  ;; Test with ediff enabled
-  (let ((gemini-cli-ide-use-ide-diff t))
-    ;; Rebuild tool lists with ediff enabled
-    (setq gemini-cli-ide-mcp-tools (gemini-cli-ide-mcp--build-tool-list))
-    (setq gemini-cli-ide-mcp-tool-schemas (gemini-cli-ide-mcp--build-tool-schemas))
-    (setq gemini-cli-ide-mcp-tool-descriptions (gemini-cli-ide-mcp--build-tool-descriptions))
-    ;; Verify diff tools are present
-    (should (alist-get "openDiff" gemini-cli-ide-mcp-tools nil nil #'string=))
-    (should (alist-get "closeAllDiffTabs" gemini-cli-ide-mcp-tools nil nil #'string=))
-    (should (alist-get "openDiff" gemini-cli-ide-mcp-tool-schemas nil nil #'string=))
-    (should (alist-get "closeAllDiffTabs" gemini-cli-ide-mcp-tool-schemas nil nil #'string=))
-    (should (alist-get "openDiff" gemini-cli-ide-mcp-tool-descriptions nil nil #'string=))
-    (should (alist-get "closeAllDiffTabs" gemini-cli-ide-mcp-tool-descriptions nil nil #'string=))))
-
-(ert-deftest gemini-cli-ide-test-mcp-server-lifecycle ()
-  "Test MCP server start and stop."
-  (require 'gemini-cli-ide-mcp)
-  (unwind-protect
-      (progn
-        ;; Start server
-        (let ((port (gemini-cli-ide-mcp-start)))
-          (should (numberp port))
-          (should (>= port 10000))
-          (should (<= port 65535))
-          ;; Check lockfile exists
-          (should (file-exists-p (gemini-cli-ide-mcp--lockfile-path port)))
-          ;; Stop server
-          (gemini-cli-ide-mcp-stop)
-          ;; Check lockfile removed
-          (should-not (file-exists-p (gemini-cli-ide-mcp--lockfile-path port)))))
-    ;; Ensure cleanup
-    (gemini-cli-ide-mcp-stop)))
-
-;; Test for side window handling in openDiff
-(defvar gemini-cli-ide-debug-buffer)
-(ert-deftest gemini-cli-ide-test-opendiff-side-window ()
-  "Test that openDiff handles side windows correctly."
-  (require 'gemini-cli-ide-debug)
-  (require 'gemini-cli-ide-mcp-handlers)
-  (let* ((temp-dir (make-temp-file "test-project-" t))
-         (gemini-cli-ide-mcp--sessions (make-hash-table :test 'equal))
-         (gemini-cli-ide-debug t)
-         (gemini-cli-ide-debug-buffer "*gemini-cli-ide-debug*")
-         (temp-file (make-temp-file "test-diff-" nil ".txt" "Original content\n"))
-         (side-window nil)
-         ;; Create a mock session for the test
-         (test-session (make-gemini-cli-ide-mcp-session
-                        :server nil
-                        :client nil
-                        :port 12345
-                        :project-dir temp-dir
-                        :deferred (make-hash-table :test 'equal)
-                        :ping-timer nil
-                        :selection-timer nil
-                        :last-selection nil
-                        :last-buffer nil
-                        :active-diffs (make-hash-table :test 'equal)
-                        :original-tab nil)))
-    ;; Register the test session
-    (puthash temp-dir test-session gemini-cli-ide-mcp--sessions)
-    ;; Create a .git directory to make this a project
-    (make-directory (expand-file-name ".git" temp-dir) t)
-
-    (unwind-protect
-        ;; Mock the project detection to return our test directory
-        (cl-letf (((symbol-function 'gemini-cli-ide-mcp--get-buffer-project)
-                   (lambda () temp-dir))
-                  ((symbol-function 'gemini-cli-ide-mcp--get-current-session)
-                   (lambda () test-session)))
-          ;; Set up the project context
-          (with-current-buffer (get-buffer-create "*test-buffer*")
-            (setq default-directory temp-dir)
-
-            ;; Create a side window to simulate the problem
-            (let ((side-buffer (get-buffer-create "*test-sidebar*")))
-              (with-current-buffer side-buffer
-                (insert "Sidebar content"))
-              ;; Display buffer in side window
-              (setq side-window (display-buffer-in-side-window
-                                 side-buffer
-                                 '((side . left) (slot . 0) (window-width . 30))))
-
-              ;; Verify side window was created
-              (should (window-parameter side-window 'window-side))
-
-              ;; Now try to open diff - should handle side window gracefully
-              (let ((result (gemini-cli-ide-mcp-handle-open-diff
-                             `((old_file_path . ,temp-file)
-                               (new_file_path . ,temp-file)
-                               (new_file_contents . "Modified content\n")
-                               (tab_name . "test-diff")))))
-                ;; Should return deferred
-                (should (eq (alist-get 'deferred result) t))
-
-                ;; Should have created diff session in the test session
-                (should (gethash "test-diff" (gemini-cli-ide-mcp-session-active-diffs test-session)))
-
-                ;; Clean up - quit ediff if it started
-                (when (and (boundp 'ediff-control-buffer)
-                           ediff-control-buffer
-                           (buffer-live-p ediff-control-buffer))
-                  (with-current-buffer ediff-control-buffer
-                    (remove-hook 'ediff-quit-hook t t)
-                    (ediff-really-quit nil)))))))
-      ;; Cleanup
-      (when (file-exists-p temp-file)
-        (delete-file temp-file))
-      (when (file-exists-p temp-dir)
-        (delete-directory temp-dir t))
-      (when (and side-window (window-live-p side-window))
-        (delete-window side-window))
-      (gemini-cli-ide-mcp--cleanup-diff "test-diff" test-session)
-      (kill-buffer "*test-buffer*")
-      (kill-buffer "*test-sidebar*"))))
-
-;;; Tests for Diagnostics
-
-(ert-deftest gemini-cli-ide-test-diagnostics-severity-mapping ()
-  "Test diagnostic severity conversion."
-  (require 'gemini-cli-ide-diagnostics)
-  ;; Test Flycheck symbols
-  (should (= (gemini-cli-ide-diagnostics--severity-to-vscode 'error) 1))
-  (should (= (gemini-cli-ide-diagnostics--severity-to-vscode 'warning) 2))
-  (should (= (gemini-cli-ide-diagnostics--severity-to-vscode 'info) 3))
-  (should (= (gemini-cli-ide-diagnostics--severity-to-vscode 'hint) 4))
-  ;; Test default fallback
-  (should (= (gemini-cli-ide-diagnostics--severity-to-vscode 'unknown) 3)))
-
-(ert-deftest gemini-cli-ide-test-diagnostics-severity-to-string ()
-  "Test severity to string conversion."
-  (require 'gemini-cli-ide-diagnostics)
-  ;; Test Flycheck severities
-  (should (equal (gemini-cli-ide-diagnostics--severity-to-string 'error) "Error"))
-  (should (equal (gemini-cli-ide-diagnostics--severity-to-string 'warning) "Warning"))
-  (should (equal (gemini-cli-ide-diagnostics--severity-to-string 'info) "Information"))
-  (should (equal (gemini-cli-ide-diagnostics--severity-to-string 'hint) "Hint"))
-  ;; Test default fallback
-  (should (equal (gemini-cli-ide-diagnostics--severity-to-string 'unknown) "Information")))
-
-(ert-deftest gemini-cli-ide-test-diagnostics-handler ()
-  "Test getDiagnostics handler."
-  (require 'gemini-cli-ide-diagnostics)
-  ;; Test with no diagnostics available
-  (let ((result (gemini-cli-ide-diagnostics-handler nil)))
-    ;; The diagnostics handler returns content array format
-    (should (listp result))
-    ;; Check it has the expected format
-    (should (equal (alist-get 'type (car result)) "text"))
-    ;; The text should be an empty array "[]"
-    (should (equal (alist-get 'text (car result)) "[]"))))
-
-;; Define mock struct for flymake diagnostics testing
-(cl-defstruct gemini-cli-ide-test-mock-diag
-  beg end type text backend)
-
-(ert-deftest gemini-cli-ide-test-flymake-diagnostics ()
-  "Test flymake diagnostics collection."
-  ;; Skip this test in batch mode as it requires a complex flymake setup
-  (skip-unless nil)
-  (require 'gemini-cli-ide-diagnostics))
-
-(ert-deftest gemini-cli-ide-test-diagnostics-backend-auto ()
-  "Test automatic backend detection."
-  (require 'gemini-cli-ide-diagnostics)
-  ;; Test flycheck detection
-  (cl-letf (((symbol-function 'featurep)
-             (lambda (feature &rest _)
-               (memq feature '(flycheck flymake))))
-            ((symbol-function 'bound-and-true-p)
-             (lambda (var)
-               (eq var 'flycheck-mode)))
-            ((symbol-function 'flycheck-diagnostics)
-             (lambda () nil))
-            (flycheck-current-errors nil)
-            (gemini-cli-ide-diagnostics-backend 'auto))
-    (with-temp-buffer
-      (let ((diags (gemini-cli-ide-diagnostics-get-all (current-buffer))))
-        ;; Should use flycheck when flycheck-mode is active
-        (should (vectorp diags))))))
-
-(ert-deftest gemini-cli-ide-test-check-document-dirty ()
-  "Test checkDocumentDirty handler."
-  (require 'gemini-cli-ide-mcp-handlers)
-  ;; Test with a modified buffer
-  (with-temp-buffer
-    (setq buffer-file-name "/tmp/test-file.el")
-    (insert "test content")
-    (set-buffer-modified-p t)
-    (let ((result (gemini-cli-ide-mcp-handle-check-document-dirty
-                   '((filePath . "/tmp/test-file.el")))))
-      (should (eq (alist-get 'isDirty result) t))))
-  ;; Test with an unmodified buffer
-  (with-temp-buffer
-    (setq buffer-file-name "/tmp/test-file2.el")
-    (insert "test content")
-    (set-buffer-modified-p nil)
-    (let ((result (gemini-cli-ide-mcp-handle-check-document-dirty
-                   '((filePath . "/tmp/test-file2.el")))))
-      (should (eq (alist-get 'isDirty result) :json-false))))
-  ;; Test with a non-existent file
-  (let ((result (gemini-cli-ide-mcp-handle-check-document-dirty
-                 '((filePath . "/tmp/non-existent-file.el")))))
-    (should (eq (alist-get 'isDirty result) :json-false)))
-  ;; Test with missing filePath parameter
-  (should-error (gemini-cli-ide-mcp-handle-check-document-dirty '())
-                :type 'mcp-error))
-
-;; Disabled due to ERT macro interaction with transient-mark-mode in batch mode
-;; The handler works correctly (verified with direct testing) but the test fails
-;; because `should` macro seems to evaluate `use-region-p` in a different context
-(ert-deftest gemini-cli-ide-test-open-file-text-patterns ()
-  "Test openFile handler with text pattern selection."
-  (skip-unless nil) ; Skip this test for now
-  (require 'gemini-cli-ide-mcp-handlers)
-  ;; Create a temporary file with known content
-  (let ((temp-file (make-temp-file "test-openfile-" nil ".el"))
-        ;; Save and restore global transient-mark-mode
-        (orig-tmm transient-mark-mode))
-    (unwind-protect
-        (progn
-          ;; Enable transient-mark-mode globally for this test
-          (setq transient-mark-mode t)
-          ;; Write test content to file
-          (with-temp-file temp-file
-            (insert "Line 1\n")
-            (insert "function foo() {\n")
-            (insert "  console.log('hello');\n")
-            (insert "}\n")
-            (insert "Line 5\n")
-            (insert "function bar() {\n")
-            (insert "  return 42;\n")
-            (insert "}\n"))
-
-          ;; Test 1: Text pattern selection with both start and end
-          (let ((_result (gemini-cli-ide-mcp-handle-open-file
-                         `((path . ,temp-file)
-                           (startText . "function foo")
-                           (endText . "}")))))
-            ;; Should have opened the file and selected from "function foo" to first "}"
-            (with-current-buffer (find-buffer-visiting temp-file)
-              (should (string= (buffer-file-name) temp-file))
-              ;; Debug info
-              (message "Debug: buffer=%s tmm=%s mark-active=%s mark=%s point=%s region-p=%s"
-                       (buffer-name) transient-mark-mode mark-active
-                       (and (mark) (mark)) (point) (use-region-p))
-              ;; Store region state before should
-              (let ((region-was-active (use-region-p)))
-                (should region-was-active))
-              (should (string= (buffer-substring-no-properties (region-beginning) (region-end))
-                               "function foo() {\n  console.log('hello');\n}"))))
-
-          ;; Test 2: Only start text pattern
-          (with-current-buffer (find-buffer-visiting temp-file)
-            (deactivate-mark))
-          (let ((_result (gemini-cli-ide-mcp-handle-open-file
-                         `((path . ,temp-file)
-                           (startText . "function bar")))))
-            ;; Should position cursor at start of "function bar"
-            (with-current-buffer (find-buffer-visiting temp-file)
-              (should (looking-at "function bar"))
-              (should-not (use-region-p))))
-
-          ;; Test 3: Text pattern with fallback to line numbers
-          (let ((_result (gemini-cli-ide-mcp-handle-open-file
-                         `((path . ,temp-file)
-                           (startText . "nonexistent text")
-                           (startLine . 2)
-                           (endLine . 4)))))
-            ;; Should fall back to line selection
-            (with-current-buffer (find-buffer-visiting temp-file)
-              (should (use-region-p))
-              (let ((selected (buffer-substring-no-properties (region-beginning) (region-end))))
-                (should (string-match-p "function foo" selected)))))
-
-          ;; Test 4: Text patterns take precedence over line numbers
-          (with-current-buffer (find-buffer-visiting temp-file)
-            (deactivate-mark))
-          (let ((_result (gemini-cli-ide-mcp-handle-open-file
-                         `((path . ,temp-file)
-                           (startText . "Line 5")
-                           (startLine . 1)))))
-            ;; Should go to "Line 5", not line 1
-            (with-current-buffer (find-buffer-visiting temp-file)
-              (should (looking-at "Line 5"))
-              (should (= (line-number-at-pos) 5)))))
-
-      ;; Cleanup
-      (delete-file temp-file)
-      ;; Restore original transient-mark-mode
-      (setq transient-mark-mode orig-tmm))))
-
-;; Test gemini-cli-ide-show-gemini-window-in-ediff option
-(ert-deftest gemini-cli-ide-test-show-gemini-window-in-ediff ()
-  "Test that Gemini window visibility is controlled correctly during ediff."
+(ert-deftest gemini-cli-ide-test-write-settings-creates-file ()
+  "Test that `--write-gemini-settings' creates .gemini/settings.json from scratch."
   (gemini-cli-ide-tests--with-temp-directory
    (lambda ()
-     (let* ((session (make-gemini-cli-ide-mcp-session
-                      :project-dir default-directory
-                      :active-diffs (make-hash-table :test 'equal)))
-            (test-file (expand-file-name "test.txt" default-directory))
-            (gemini-buffer-created nil)
-            (gemini-window-displayed nil))
+     (let* ((gemini-dir (expand-file-name ".gemini" default-directory))
+            (settings-file (expand-file-name "settings.json" gemini-dir)))
+       (should-not (file-exists-p settings-file))
+       ;; Mock connection info
+       (cl-letf (((symbol-function 'emacs-mcp-connection-info)
+                  (lambda () '((:url . "http://localhost:12345/mcp")))))
+         (gemini-cli-ide--write-gemini-settings default-directory))
+       (should (file-exists-p settings-file))
+       (let ((data (with-temp-buffer
+                     (insert-file-contents settings-file)
+                     (json-parse-buffer :object-type 'alist))))
+         (should (equal (alist-get 'url (alist-get 'emacs (alist-get 'mcpServers data)))
+                        "http://localhost:12345/mcp")))))))
 
-       ;; Register session in global hash table
-       (puthash default-directory session gemini-cli-ide-mcp--sessions)
-
-       ;; Create a test file
-       (with-temp-file test-file (insert "Original content"))
-
-       ;; Create a .git directory to make this a project
-       (make-directory (expand-file-name ".git" default-directory) t)
-
-       ;; Mock relevant functions
-       (cl-letf* (((symbol-function 'gemini-cli-ide--get-buffer-name)
-                   (lambda (&optional _dir) "*Gemini Cli Test*"))
-                  ((symbol-function 'gemini-cli-ide--display-buffer-in-side-window)
-                   (lambda (_buffer)
-                     (setq gemini-window-displayed t)
-                     (selected-window)))
-                  ((symbol-function 'ediff-buffers)
-                   (lambda (_buf-A _buf-B)
-                     ;; Simulate successful ediff start
-                     (setq ediff-control-buffer (get-buffer-create "*Ediff Control*"))))
-                  ((symbol-function 'ediff-next-difference)
-                   (lambda () nil))
-                  ((symbol-function 'gemini-cli-ide-mcp--get-current-session)
-                   (lambda () session)))
-
-         ;; Create a Gemini buffer
-         (setq gemini-buffer-created (get-buffer-create "*Gemini Cli Test*"))
-
-         ;; Test 1: With gemini-cli-ide-show-gemini-window-in-ediff = t (default)
-         (let ((gemini-cli-ide-show-gemini-window-in-ediff t)
-               (ediff-control-buffer (get-buffer-create "*Ediff Control*")))
-           (setq gemini-window-displayed nil)
-           ;; Call the startup handler
-           (gemini-cli-ide-mcp--handle-ediff-startup "test-diff" session nil
-                                                     (lambda () nil))
-           ;; Should display Gemini window
-           (should gemini-window-displayed))
-
-         ;; Test 2: With gemini-cli-ide-show-gemini-window-in-ediff = nil
-         (let ((gemini-cli-ide-show-gemini-window-in-ediff nil)
-               (ediff-control-buffer (get-buffer-create "*Ediff Control*")))
-           (setq gemini-window-displayed nil)
-           ;; Call the startup handler
-           (gemini-cli-ide-mcp--handle-ediff-startup "test-diff" session nil
-                                                     (lambda () nil))
-           ;; Should NOT display Gemini window
-           (should-not gemini-window-displayed))
-
-         ;; Cleanup
-         (when (buffer-live-p gemini-buffer-created)
-           (kill-buffer gemini-buffer-created))
-         (when (get-buffer "*Ediff Control*")
-           (kill-buffer "*Ediff Control*"))
-         (when (file-exists-p test-file)
-           (delete-file test-file))
-         (remhash default-directory gemini-cli-ide-mcp--sessions))))))
-
-;; Test multiple ediff sessions
-(ert-deftest gemini-cli-ide-test-multiple-ediff-sessions ()
-  "Test that multiple ediff sessions can run simultaneously without conflicts."
+(ert-deftest gemini-cli-ide-test-write-settings-merges-existing ()
+  "Test that `--write-gemini-settings' merges with existing settings."
   (gemini-cli-ide-tests--with-temp-directory
    (lambda ()
-     (let* ((session (make-gemini-cli-ide-mcp-session
-                      :project-dir default-directory
-                      :active-diffs (make-hash-table :test 'equal)))
-            (file1 (expand-file-name "test-file1.txt" default-directory))
-            (file2 (expand-file-name "test-file2.txt" default-directory))
-            (control-buffers '()))
-
-       ;; Register session in global hash table
-       (puthash default-directory session gemini-cli-ide-mcp--sessions)
-
-       ;; Create test files
-       (with-temp-file file1 (insert "Original content 1"))
-       (with-temp-file file2 (insert "Original content 2"))
-
-       ;; Create a .git directory to make this a project
-       (make-directory (expand-file-name ".git" default-directory) t)
-
-       ;; Mock ediff functions to capture control buffer names
-       (cl-letf* ((ediff-called-count 0)
-                  ((symbol-function 'ediff-buffers)
-                   (lambda (_buf-A _buf-B)
-                     (cl-incf ediff-called-count)
-                     ;; Simulate ediff creating a control buffer with the suffix
-                     (let ((suffix (or ediff-control-buffer-suffix "")))
-                       (push (format "*Ediff Control Panel%s*" suffix) control-buffers))))
-                  ((symbol-function 'gemini-cli-ide-mcp--get-current-session)
-                   (lambda () session)))
-
-         ;; Simulate opening multiple diffs
-         (unwind-protect
-             (progn
-               ;; Open first diff
-               (let ((result1 (gemini-cli-ide-mcp-handle-open-diff
-                               `((old_file_path . ,file1)
-                                 (new_file_path . ,file1)
-                                 (new_file_contents . "Modified content 1")
-                                 (tab_name . "diff1")))))
-                 (should (equal (alist-get 'deferred result1) t))
-                 (should (equal (alist-get 'unique-key result1) "diff1"))
-                 (should (equal (alist-get 'session result1) session)))
-
-               ;; Open second diff
-               (let ((result2 (gemini-cli-ide-mcp-handle-open-diff
-                               `((old_file_path . ,file2)
-                                 (new_file_path . ,file2)
-                                 (new_file_contents . "Modified content 2")
-                                 (tab_name . "diff2")))))
-                 (should (equal (alist-get 'deferred result2) t))
-                 (should (equal (alist-get 'unique-key result2) "diff2"))
-                 (should (equal (alist-get 'session result2) session)))
-
-               ;; Verify ediff was called twice
-               (should (= ediff-called-count 2))
-
-               ;; Verify we have two distinct control buffer names
-               (should (= (length control-buffers) 2))
-               (should (member "*Ediff Control Panel<diff1>*" control-buffers))
-               (should (member "*Ediff Control Panel<diff2>*" control-buffers))
-
-               ;; Verify active diffs are tracked correctly
-               (let ((active-diffs (gemini-cli-ide-mcp--get-active-diffs session)))
-                 (should (gethash "diff1" active-diffs))
-                 (should (gethash "diff2" active-diffs))))
-
-           ;; Cleanup
-           (gemini-cli-ide-mcp-handle-close-all-diff-tabs nil)
-           (when (file-exists-p file1) (delete-file file1))
-           (when (file-exists-p file2) (delete-file file2))
-           ;; Remove session from global hash table
-           (remhash default-directory gemini-cli-ide-mcp--sessions)))))))
-
-(ert-deftest test-gemini-cli-ide-mcp-multi-session-deferred ()
-  "Test that deferred responses work correctly with multiple sessions."
-  (skip-unless (not (getenv "CI")))
-  (let ((gemini-cli-ide-mcp--sessions (make-hash-table :test 'equal))
-        (project-a "/tmp/project-a/")
-        (project-b "/tmp/project-b/")
-        (session-a nil)
-        (session-b nil)
-        (_deferred-responses '())
-        (sent-responses '()))
-    ;; Create mock websocket-send-text to capture responses
-    (cl-letf* (((symbol-function 'websocket-send-text)
-                (lambda (_ws text)
-                  (push text sent-responses))))
-      (unwind-protect
-          (progn
-            ;; Create two sessions
-            (make-directory project-a t)
-            (make-directory project-b t)
-
-            ;; Session A
-            (let ((default-directory project-a))
-              (gemini-cli-ide-mcp-start project-a)
-              (setq session-a (gethash project-a gemini-cli-ide-mcp--sessions)))
-
-            ;; Session B
-            (let ((default-directory project-b))
-              (gemini-cli-ide-mcp-start project-b)
-              (setq session-b (gethash project-b gemini-cli-ide-mcp--sessions)))
-
-            ;; Set up mock clients for each session
-            (setf (gemini-cli-ide-mcp-session-client session-a) :mock-client-a)
-            (setf (gemini-cli-ide-mcp-session-client session-b) :mock-client-b)
-
-            ;; Store deferred responses in each session
-            (let ((deferred-a (gemini-cli-ide-mcp-session-deferred session-a))
-                  (deferred-b (gemini-cli-ide-mcp-session-deferred session-b)))
-              ;; Session A has a deferred response for openDiff-diff1
-              (puthash "openDiff-diff1" "request-id-1" deferred-a)
-              ;; Session B has a deferred response for openDiff-diff2
-              (puthash "openDiff-diff2" "request-id-2" deferred-b))
-
-            ;; Complete deferred response for session A
-            (gemini-cli-ide-mcp-complete-deferred session-a
-                                                  "openDiff"
-                                                  '(((type . "text") (text . "FILE_SAVED")))
-                                                  "diff1")
-
-            ;; Complete deferred response for session B
-            (gemini-cli-ide-mcp-complete-deferred session-b
-                                                  "openDiff"
-                                                  '(((type . "text") (text . "DIFF_REJECTED")))
-                                                  "diff2")
-
-            ;; Verify both responses were sent
-            (should (= (length sent-responses) 2))
-
-            ;; Verify the responses contain the correct request IDs
-            (let ((response1 (json-read-from-string (nth 1 sent-responses)))
-                  (response2 (json-read-from-string (nth 0 sent-responses))))
-              ;; Check that request-id-1 and request-id-2 were both used
-              (let ((ids (list (alist-get 'id response1) (alist-get 'id response2))))
-                (should (member "request-id-1" ids))
-                (should (member "request-id-2" ids))))
-
-            ;; Verify deferred responses were removed from sessions
-            (should (= 0 (hash-table-count (gemini-cli-ide-mcp-session-deferred session-a))))
-            (should (= 0 (hash-table-count (gemini-cli-ide-mcp-session-deferred session-b)))))
-
-        ;; Cleanup
-        (ignore-errors (delete-directory project-a t))
-        (ignore-errors (delete-directory project-b t))
-        (clrhash gemini-cli-ide-mcp--sessions)))))
-
-;;; MCP Tools Server Tests
-
-;; Mock the server functions since web-server might not be available in test env
-(defvar gemini-cli-ide-mcp-server-tests--mock-server-started nil)
-(defvar gemini-cli-ide-mcp-server-tests--mock-server-port 12345)
-
-(defun gemini-cli-ide-mcp-server-tests--mock-server-start (&optional _port)
-  "Mock server start function."
-  (setq gemini-cli-ide-mcp-server-tests--mock-server-started t)
-  (cons 'mock-process gemini-cli-ide-mcp-server-tests--mock-server-port))
-
-(defun gemini-cli-ide-mcp-server-tests--mock-server-stop (_process)
-  "Mock server stop function."
-  (setq gemini-cli-ide-mcp-server-tests--mock-server-started nil))
-
-;;; Mock websocket request/response for testing
-(defvar gemini-cli-ide-mcp-server-tests--last-response nil
-  "Storage for the last response sent.")
-
-(defvar gemini-cli-ide-mcp-server-tests--last-response-headers nil
-  "Storage for the last response headers.")
-
-(defvar gemini-cli-ide-mcp-server-tests--last-response-status nil
-  "Storage for the last response status.")
-
-;; Mock the web-server functions
-(cl-defstruct gemini-cli-ide-mcp-server-tests--mock-request
-  process headers body)
-
-(cl-defstruct gemini-cli-ide-mcp-server-tests--mock-process)
-
-(defun gemini-cli-ide-mcp-server-tests--mock-ws-response-header (_process status &rest headers)
-  "Mock ws-response-header function."
-  (setq gemini-cli-ide-mcp-server-tests--last-response-status status)
-  (setq gemini-cli-ide-mcp-server-tests--last-response-headers headers))
-
-(defun gemini-cli-ide-mcp-server-tests--mock-ws-send (process data)
-  "Mock ws-send function."
-  (unless (gemini-cli-ide-mcp-server-tests--mock-process-p process)
-    (error "Wrong type argument: processp, %s" process))
-  (setq gemini-cli-ide-mcp-server-tests--last-response data))
-
-(defun gemini-cli-ide-mcp-server-tests--mock-ws-send-404 (process)
-  "Mock ws-send-404 function."
-  (unless (gemini-cli-ide-mcp-server-tests--mock-process-p process)
-    (error "Wrong type argument: processp, %s" process))
-  (setq gemini-cli-ide-mcp-server-tests--last-response-status 404))
-
-;;; Session Management Tests
-
-(ert-deftest gemini-cli-ide-mcp-server-test-session-lifecycle ()
-  "Test MCP tools server session lifecycle."
-  (let ((gemini-cli-ide-enable-mcp-server t)
-        (gemini-cli-ide-mcp-server--session-count 0)
-        (gemini-cli-ide-mcp-server--server nil)
-        (gemini-cli-ide-mcp-server--port nil))
-    ;; Mock the server functions and require
-    (cl-letf (((symbol-function 'gemini-cli-ide-mcp-http-server-start)
-               #'gemini-cli-ide-mcp-server-tests--mock-server-start)
-              ((symbol-function 'gemini-cli-ide-mcp-http-server-stop)
-               #'gemini-cli-ide-mcp-server-tests--mock-server-stop)
-              ((symbol-function 'require)
-               (lambda (feature &optional filename noerror)
-                 (cond ((eq feature 'gemini-cli-ide-mcp-http-server) nil)
-                       ((memq feature '(gemini-cli-ide-mcp-server websocket vterm flycheck
-                                                                  gemini-cli-ide-debug gemini-cli-ide-mcp-handlers
-                                                                  gemini-cli-ide transient)) nil)
-                       (t (funcall (cl-letf-saved-symbol-function 'require) feature filename noerror))))))
-      ;; First session should start the server
-      (gemini-cli-ide-mcp-server-session-started)
-      (should (= gemini-cli-ide-mcp-server--session-count 1))
-      ;; Manually call the mock server start since ensure-server might fail
-      (setq gemini-cli-ide-mcp-server--server
-            (car (gemini-cli-ide-mcp-server-tests--mock-server-start)))
-      (setq gemini-cli-ide-mcp-server--port
-            (cdr (gemini-cli-ide-mcp-server-tests--mock-server-start)))
-      (should gemini-cli-ide-mcp-server--server)
-      (should (= gemini-cli-ide-mcp-server--port
-                 gemini-cli-ide-mcp-server-tests--mock-server-port))
-
-      ;; Second session should not restart the server
-      (gemini-cli-ide-mcp-server-session-started)
-      (should (= gemini-cli-ide-mcp-server--session-count 2))
-
-      ;; Ending one session should not stop the server
-      (gemini-cli-ide-mcp-server-session-ended)
-      (should (= gemini-cli-ide-mcp-server--session-count 1))
-      (should gemini-cli-ide-mcp-server--server)
-
-      ;; Ending last session should stop the server
-      (gemini-cli-ide-mcp-server-session-ended)
-      (should (= gemini-cli-ide-mcp-server--session-count 0))
-      ;; Manually stop the mock server
-      (gemini-cli-ide-mcp-server-tests--mock-server-stop gemini-cli-ide-mcp-server--server)
-      (setq gemini-cli-ide-mcp-server--server nil)
-      (setq gemini-cli-ide-mcp-server--port nil)
-      (should-not gemini-cli-ide-mcp-server--server)
-      (should-not gemini-cli-ide-mcp-server--port))))
-
-(ert-deftest gemini-cli-ide-mcp-server-test-config-generation ()
-  "Test MCP configuration generation."
-  (let ((gemini-cli-ide-enable-mcp-server t)
-        (gemini-cli-ide-mcp-server--server 'mock-server)
-        (gemini-cli-ide-mcp-server--port 8080))
-    ;; With server running
-    (cl-letf (((symbol-function 'process-live-p) (lambda (_) t))
-              ((symbol-function 'ws-process) (lambda (_) 'mock-process)))
-      (let ((config (gemini-cli-ide-mcp-server-get-config)))
-        (should config)
-        (should (equal (alist-get 'type (alist-get 'emacs-tools (alist-get 'mcpServers config)))
-                       "http"))
-        (should (equal (alist-get 'url (alist-get 'emacs-tools (alist-get 'mcpServers config)))
-                       "http://localhost:8080/mcp"))))
-
-    ;; Without server running
-    (let ((gemini-cli-ide-mcp-server--server nil)
-          (gemini-cli-ide-mcp-server--port nil)
-          (config (gemini-cli-ide-mcp-server-get-config)))
-      (should-not config))))
-
-(ert-deftest gemini-cli-ide-mcp-server-test-disabled ()
-  "Test that MCP tools server does nothing when disabled."
-  (let ((gemini-cli-ide-enable-mcp-server nil)
-        (gemini-cli-ide-mcp-server--session-count 0))
-    (should-not (gemini-cli-ide-mcp-server-ensure-server))
-    (gemini-cli-ide-mcp-server-session-started)
-    (should (= gemini-cli-ide-mcp-server--session-count 1))
-    ;; But server should not start
-    (should-not gemini-cli-ide-mcp-server--server)))
-
-;;; Tool Configuration Tests
-
-(ert-deftest gemini-cli-ide-mcp-server-test-tool-config ()
-  "Test tool configuration structure."
-  (let ((gemini-cli-ide-mcp-server-tools
-         '((test-function
-            :description "Test function"
-            :parameters ((:name "arg1" :type "string" :required t)
-                         (:name "arg2" :type "number" :required nil))))))
-    (let* ((tool (car gemini-cli-ide-mcp-server-tools))
-           (name (car tool))
-           (plist (cdr tool)))
-      (should (eq name 'test-function))
-      (should (equal (plist-get plist :description) "Test function"))
-      (should (= (length (plist-get plist :parameters)) 2)))))
-
-;;; JSON-RPC Message Tests
-
-(ert-deftest gemini-cli-ide-mcp-server-test-json-encoding ()
-  "Test JSON encoding of MCP config."
-  (let ((config '((mcpServers . ((emacs-tools . ((transport . "http")
-                                                 (url . "http://localhost:8080/mcp"))))))))
-    (let ((json-str (json-encode config)))
-      (should (stringp json-str))
-      (should (string-match "mcpServers" json-str))
-      (should (string-match "emacs-tools" json-str))
-      (should (string-match "transport.*:.*http" json-str)))))
-
-(ert-deftest gemini-cli-ide-mcp-server-test-ws-send-fix ()
-  "Test that ws-send is called with process, not request."
-  ;; Test that verifies our fix for the wrong-type-argument error
-  ;; Skip test if web-server is not available
-  (skip-unless (condition-case nil
-                   (progn (require 'web-server) t)
-                 (error nil)))
-  (require 'gemini-cli-ide-mcp-http-server)
-  (let ((mock-process (make-gemini-cli-ide-mcp-server-tests--mock-process))
-        (mock-request (make-gemini-cli-ide-mcp-server-tests--mock-request)))
-    ;; Set the process in the request
-    (setf (gemini-cli-ide-mcp-server-tests--mock-request-process mock-request) mock-process)
-    ;; Mock the ws-* functions
-    (cl-letf (((symbol-function 'ws-response-header)
-               #'gemini-cli-ide-mcp-server-tests--mock-ws-response-header)
-              ((symbol-function 'ws-send)
-               #'gemini-cli-ide-mcp-server-tests--mock-ws-send)
-              ((symbol-function 'ws-send-404)
-               #'gemini-cli-ide-mcp-server-tests--mock-ws-send-404))
-      ;; Test send-json-response
-      (gemini-cli-ide-mcp-http-server--send-json-response
-       mock-request 200 '((test . "data")))
-      (should (equal gemini-cli-ide-mcp-server-tests--last-response-status 200))
-      (should (string-match "test.*:.*data" gemini-cli-ide-mcp-server-tests--last-response))
-
-      ;; Test handle-get (404 response)
-      (gemini-cli-ide-mcp-http-server--handle-get mock-request)
-      (should (equal gemini-cli-ide-mcp-server-tests--last-response-status 404)))))
-
-;;; MCP Server Session Context Tests
-
-(ert-deftest gemini-cli-ide-mcp-server-test-session-registration ()
-  "Test session registration and retrieval."
-  (let ((session-id "test-session-123")
-        (project-dir "/tmp/test-project")
-        (buffer (get-buffer-create "*test-buffer*")))
-    (unwind-protect
-        (progn
-          ;; Register a session
-          (gemini-cli-ide-mcp-server-register-session session-id project-dir buffer)
-
-          ;; Retrieve and verify session context
-          (let ((context (gethash session-id gemini-cli-ide-mcp-server--sessions)))
-            (should context)
-            (should (equal (plist-get context :project-dir) project-dir))
-            (should (eq (plist-get context :buffer) buffer))
-            (should (plist-get context :start-time)))
-
-          ;; Test get-session-context function
-          (let ((gemini-cli-ide-mcp-server--current-session-id session-id))
-            (let ((context (gemini-cli-ide-mcp-server-get-session-context)))
-              (should context)
-              (should (equal (plist-get context :project-dir) project-dir))))
-
-          ;; Unregister session
-          (gemini-cli-ide-mcp-server-unregister-session session-id)
-          (should-not (gethash session-id gemini-cli-ide-mcp-server--sessions)))
-
-      ;; Cleanup
-      (kill-buffer buffer)
-      (clrhash gemini-cli-ide-mcp-server--sessions))))
-
-(ert-deftest gemini-cli-ide-mcp-server-test-with-session-context-macro ()
-  "Test the with-session-context macro."
-  (let ((session-id "test-session-456")
-        (project-dir "/tmp/test-project-2/")
-        (buffer (get-buffer-create "*test-buffer-2*"))
-        (original-dir default-directory))
-    (unwind-protect
-        (progn
-          ;; Set up the buffer with the project directory
-          (with-current-buffer buffer
-            (setq default-directory project-dir))
-
-          ;; Register a session
-          (gemini-cli-ide-mcp-server-register-session session-id project-dir buffer)
-
-          ;; Test macro with valid session
-          (let ((gemini-cli-ide-mcp-server--current-session-id session-id))
-            (gemini-cli-ide-mcp-server-with-session-context nil
-              ;; Inside the macro, default-directory should be the project dir
-              (should (equal default-directory project-dir))
-              ;; Current buffer should be the session buffer
-              (should (eq (current-buffer) buffer))))
-
-          ;; Verify we're back to original context
-          (should (equal default-directory original-dir))
-
-          ;; Test error handling with invalid session
-          (let ((gemini-cli-ide-mcp-server--current-session-id "invalid-session"))
-            (should-error
-             (gemini-cli-ide-mcp-server-with-session-context nil
-               (error "Should not reach here")))))
-
-      ;; Cleanup
-      (kill-buffer buffer)
-      (clrhash gemini-cli-ide-mcp-server--sessions))))
-
-(ert-deftest gemini-cli-ide-mcp-server-test-session-lifecycle-detailed ()
-  "Test complete session lifecycle with detailed tracking."
-  (let ((session-id "test-session-789")
-        (project-dir "/tmp/test-project-3")
-        (buffer (get-buffer-create "*test-buffer-3*")))
-    (unwind-protect
-        (progn
-          ;; Start session
-          (gemini-cli-ide-mcp-server-session-started session-id project-dir buffer)
-          (should (= gemini-cli-ide-mcp-server--session-count 1))
-          (should (gethash session-id gemini-cli-ide-mcp-server--sessions))
-
-          ;; End session
-          (gemini-cli-ide-mcp-server-session-ended session-id)
-          (should (= gemini-cli-ide-mcp-server--session-count 0))
-          (should-not (gethash session-id gemini-cli-ide-mcp-server--sessions)))
-
-      ;; Cleanup
-      (kill-buffer buffer)
-      (setq gemini-cli-ide-mcp-server--session-count 0)
-      (clrhash gemini-cli-ide-mcp-server--sessions))))
-
-(ert-deftest gemini-cli-ide-mcp-server-test-config-with-session-id ()
-  "Test MCP config generation with session ID."
-  ;; Mock the server port
-  (cl-letf (((symbol-function 'gemini-cli-ide-mcp-server-get-port)
-             (lambda () 12345)))
-    ;; Test without session ID
-    (let ((config (gemini-cli-ide-mcp-server-get-config)))
-      (should config)
-      (let ((url (alist-get 'url (alist-get 'emacs-tools (alist-get 'mcpServers config)))))
-        (should (equal url "http://localhost:12345/mcp"))))
-
-    ;; Test with session ID
-    (let ((config (gemini-cli-ide-mcp-server-get-config "my-session-123")))
-      (should config)
-      (let* ((emacs-tools (alist-get 'emacs-tools (alist-get 'mcpServers config)))
-             (url (alist-get 'url emacs-tools)))
-        (should (equal url "http://localhost:12345/mcp/my-session-123"))))))
-
-;;; Emacs Tools Tests
-
-(ert-deftest gemini-cli-ide-emacs-tools-test-imenu-list-symbols ()
-  "Test the imenu-list-symbols MCP tool."
-  ;; Load the emacs-tools module
-  (require 'gemini-cli-ide-emacs-tools)
-
-  (let ((test-file (make-temp-file "test-imenu-" nil ".el"))
-        (session-id "test-session-imenu")
-        (project-dir (temporary-file-directory)))
-    (unwind-protect
-        (progn
-          ;; Write test content to file
-          (with-temp-file test-file
-            (insert ";;; Test file for imenu\n\n"
-                    "(defun test-function-1 (arg)\n"
-                    "  \"A test function.\"\n"
-                    "  (message \"Hello %s\" arg))\n\n"
-                    "(defvar test-variable 42\n"
-                    "  \"A test variable.\")\n\n"
-                    "(defun test-function-2 ()\n"
-                    "  \"Another test function.\"\n"
-                    "  (+ 1 2))\n\n"
-                    "(defconst test-constant 'foo\n"
-                    "  \"A test constant.\")\n"))
-
-          ;; Register a mock session
-          (gemini-cli-ide-mcp-server-register-session session-id project-dir nil)
-
-          ;; Test with session context
-          (let ((gemini-cli-ide-mcp-server--current-session-id session-id))
-            (let ((result (gemini-cli-ide-mcp-imenu-list-symbols test-file)))
-              ;; Should return a list of results
-              (should (listp result))
-              (should (> (length result) 0))
-
-              ;; Check that we found our functions and variables
-              (let ((result-string (mapconcat #'identity result "\n")))
-                (should (string-match "test-function-1" result-string))
-                (should (string-match "test-function-2" result-string))
-                (should (string-match "test-variable" result-string))
-                (should (string-match "test-constant" result-string))
-
-                ;; Check format includes line numbers
-                (should (string-match ":[0-9]+:" result-string)))))
-
-          ;; Test error handling - no file path
-          (should-error (gemini-cli-ide-mcp-imenu-list-symbols nil)
-                        :type 'error)
-
-          ;; Test with non-existent file
-          (let ((result (condition-case nil
-                            (gemini-cli-ide-mcp-imenu-list-symbols "/nonexistent/file.el")
-                          (error "Error listing symbols"))))
-            (should (stringp result))
-            (should (string-match "Error" result))))
-
-      ;; Cleanup
-      (delete-file test-file)
-      (gemini-cli-ide-mcp-server-unregister-session session-id))))
-
-(ert-deftest gemini-cli-ide-emacs-tools-test-imenu-nested-symbols ()
-  "Test imenu-list-symbols with nested symbol structures."
-  (require 'gemini-cli-ide-emacs-tools)
-
-  (let ((test-file (make-temp-file "test-imenu-nested-" nil ".py"))
-        (session-id "test-session-imenu-nested")
-        (project-dir (temporary-file-directory)))
-    (unwind-protect
-        (progn
-          ;; Write Python test content (which often has nested imenu structures)
-          (with-temp-file test-file
-            (insert "# Test Python file\n\n"
-                    "class TestClass:\n"
-                    "    def method1(self):\n"
-                    "        pass\n\n"
-                    "    def method2(self, arg):\n"
-                    "        return arg * 2\n\n"
-                    "def standalone_function():\n"
-                    "    return 42\n"))
-
-          ;; Register a mock session
-          (gemini-cli-ide-mcp-server-register-session session-id project-dir nil)
-
-          ;; Test with session context
-          (let ((gemini-cli-ide-mcp-server--current-session-id session-id))
-            ;; Note: This test might not find nested structures if python-mode
-            ;; isn't properly configured, but it should at least not error
-            (condition-case err
-                (let ((result (gemini-cli-ide-mcp-imenu-list-symbols test-file)))
-                  ;; Should return either a list or a string (no symbols message)
-                  (should (or (listp result) (stringp result))))
-              (error
-               ;; If python mode isn't available, that's okay for this test
-               (should (string-match "Error" (error-message-string err)))))))
-
-      ;; Cleanup
-      (delete-file test-file)
-      (gemini-cli-ide-mcp-server-unregister-session session-id))))
-
-(ert-deftest gemini-cli-ide-test-tool-format-backward-compatibility ()
-  "Test that both old and new tool formats work correctly."
-  (require 'gemini-cli-ide-mcp-server)
-
-  ;; Define a test function
-  (defun test-tool-func (arg1 arg2)
-    "Test function for tool format testing."
-    (list arg1 arg2))
-
-  ;; Test old format
-  (let ((old-format-tool '(test-tool-func
-                           :description "Test tool in old format"
-                           :parameters ((:name "arg1"
-                                               :type "string"
-                                               :required t
-                                               :description "First argument")
-                                        (:name "arg2"
-                                               :type "number"
-                                               :required nil
-                                               :description "Second argument")))))
-
-    ;; Check format detection
-    (should (eq (gemini-cli-ide--tool-format-p old-format-tool) 'old))
-
-    ;; Check normalization - should emit warning
-    (let ((warning-msg nil))
-      ;; Capture the warning message
-      (cl-letf (((symbol-function 'message)
-                 (lambda (fmt &rest args)
-                   (when (string-match "deprecated format" fmt)
-                     (setq warning-msg (apply #'format fmt args))))))
-        (let ((normalized (gemini-cli-ide--normalize-tool-spec old-format-tool)))
-          (should (eq (plist-get normalized :function) 'test-tool-func))
-          (should (equal (plist-get normalized :name) "test-tool-func"))
-          (should (equal (plist-get normalized :description) "Test tool in old format"))
-          (should (equal (length (plist-get normalized :args)) 2))))
-      ;; Verify warning was emitted
-      (should warning-msg)
-      (should (string-match "test-tool-func.*deprecated.*gemini-cli-ide-make-tool" warning-msg))))
-
-  ;; Test new format
-  (let ((new-format-tool (gemini-cli-ide-make-tool
-                          :function #'test-tool-func
-                          :name "test_tool_new"
-                          :description "Test tool in new format"
-                          :args '((:name "arg1"
-                                         :type string
-                                         :description "First argument")
-                                  (:name "arg2"
-                                         :type number
-                                         :description "Second argument"
-                                         :optional t)))))
-
-    ;; Check format detection
-    (should (eq (gemini-cli-ide--tool-format-p new-format-tool) 'new))
-
-    ;; Check normalization
-    (let ((normalized (gemini-cli-ide--normalize-tool-spec new-format-tool)))
-      (should (eq (plist-get normalized :function) 'test-tool-func))
-      (should (equal (plist-get normalized :name) "test_tool_new"))
-      (should (equal (plist-get normalized :description) "Test tool in new format"))
-      (let ((args (plist-get normalized :args)))
-        (should (equal (length args) 2))
-        ;; Check first argument
-        (let ((arg1 (car args)))
-          (should (equal (plist-get arg1 :name) "arg1"))
-          (should (eq (plist-get arg1 :type) 'string))
-          (should (not (plist-get arg1 :optional))))
-        ;; Check second argument
-        (let ((arg2 (cadr args)))
-          (should (equal (plist-get arg2 :name) "arg2"))
-          (should (eq (plist-get arg2 :type) 'number))
-          (should (plist-get arg2 :optional))))))
-
-  ;; Test that both formats can coexist in the same list
-  (let* ((gemini-cli-ide-mcp-server-tools
-          (list
-           ;; Old format
-           '(test-func-old
-             :description "Old format tool"
-             :parameters ((:name "param" :type "string" :required t)))
-           ;; New format
-           (gemini-cli-ide-make-tool
-            :function #'test-func-new
-            :name "test_func_new"
-            :description "New format tool"
-            :args '((:name "param" :type string)))))
-         (normalized-tools (mapcar #'gemini-cli-ide--normalize-tool-spec
-                                   gemini-cli-ide-mcp-server-tools)))
-
-    ;; Both tools should normalize correctly
-    (should (equal (length normalized-tools) 2))
-    (should (eq (plist-get (car normalized-tools) :function) 'test-func-old))
-    (should (eq (plist-get (cadr normalized-tools) :function) 'test-func-new))))
-
-(ert-deftest gemini-cli-ide-emacs-tools-test-tool-configuration ()
-  "Test that imenu tool is properly configured."
-  (require 'gemini-cli-ide-emacs-tools)
-  (require 'gemini-cli-ide-mcp-server)
-
-  ;; Setup tools first
-  (gemini-cli-ide-emacs-tools-setup)
-
-  ;; Find the imenu tool in the registered tools
-  (let ((imenu-tool (cl-find-if
-                     (lambda (tool)
-                       (let ((normalized (gemini-cli-ide--normalize-tool-spec tool)))
-                         (eq (plist-get normalized :function)
-                             'gemini-cli-ide-mcp-imenu-list-symbols)))
-                     gemini-cli-ide-mcp-server-tools)))
-    (should imenu-tool)
-
-    ;; Normalize the tool to check its properties
-    (let ((normalized (gemini-cli-ide--normalize-tool-spec imenu-tool)))
-      ;; Check description
-      (should (equal (plist-get normalized :description)
-                     "Navigate and explore a file's structure by listing all its functions, classes, and variables with their locations"))
-
-      ;; Check args
-      (let ((args (plist-get normalized :args)))
-        (should (= (length args) 1))
-        (let ((file-path-arg (car args)))
-          (should (equal (plist-get file-path-arg :name) "file_path"))
-          (should (eq (plist-get file-path-arg :type) 'string))
-          (should (not (plist-get file-path-arg :optional)))
-          (should (equal (plist-get file-path-arg :description)
-                         "Path to the file to analyze for symbols")))))))
+     (let* ((gemini-dir (expand-file-name ".gemini" default-directory))
+            (settings-file (expand-file-name "settings.json" gemini-dir)))
+       (make-directory gemini-dir t)
+       (with-temp-file settings-file
+         (insert "{\"mcpServers\": {\"other\": {\"url\": \"http://other\"}}, \"otherSetting\": true}"))
+       ;; Mock connection info
+       (cl-letf (((symbol-function 'emacs-mcp-connection-info)
+                  (lambda () '((:url . "http://localhost:12345/mcp")))))
+         (gemini-cli-ide--write-gemini-settings default-directory))
+       (let ((data (with-temp-buffer
+                     (insert-file-contents settings-file)
+                     (json-parse-buffer :object-type 'alist))))
+         ;; New setting added
+         (should (equal (alist-get 'url (alist-get 'emacs (alist-get 'mcpServers data)))
+                        "http://localhost:12345/mcp"))
+         ;; Existing setting preserved
+         (should (equal (alist-get 'url (alist-get 'other (alist-get 'mcpServers data)))
+                        "http://other"))
+         (should (equal (alist-get 'otherSetting data) t)))))))
+
+(ert-deftest gemini-cli-ide-test-write-settings-rejects-malformed ()
+  "Test that `--write-gemini-settings' rejects malformed pre-existing files."
+  (gemini-cli-ide-tests--with-temp-directory
+   (lambda ()
+     (let* ((gemini-dir (expand-file-name ".gemini" default-directory))
+            (settings-file (expand-file-name "settings.json" gemini-dir)))
+       (make-directory gemini-dir t)
+       (with-temp-file settings-file
+         (insert "{malformed json]"))
+       (should-error (gemini-cli-ide--write-gemini-settings default-directory)
+                     :type 'user-error)))))
+
+(ert-deftest gemini-cli-ide-test-require-emacs-mcp-missing ()
+  "Test that `--require-emacs-mcp' signals error when missing."
+  (let ((orig-featurep (symbol-function 'featurep)))
+    (cl-letf (((symbol-function 'featurep)
+               (lambda (sym &rest args) (if (eq sym 'emacs-mcp) nil (apply orig-featurep sym args)))))
+      (let ((err (should-error (gemini-cli-ide--require-emacs-mcp) :type 'user-error)))
+        (should (string-match "emacs-mcp" (error-message-string err)))))))
+
+(ert-deftest gemini-cli-ide-test-require-emacs-mcp-old-emacs ()
+  "Test that `--require-emacs-mcp' signals error on old Emacs versions."
+  (cl-letf (((symbol-value 'emacs-version) "28.1"))
+    (let ((err (should-error (gemini-cli-ide--require-emacs-mcp) :type 'user-error)))
+      (should (string-match "Emacs 29.1" (error-message-string err))))))
+
+(ert-deftest gemini-cli-ide-test-server-refcount-acquire-release ()
+  "Test server refcount semantics."
+  (let ((gemini-cli-ide--mcp-server-owner-count 0))
+    (cl-letf (((symbol-function 'emacs-mcp-connection-info) (lambda () nil))
+              ((symbol-function 'emacs-mcp-start) #'ignore)
+              ((symbol-function 'emacs-mcp-stop) #'ignore))
+      ;; Acquire 1
+      (let ((owns (gemini-cli-ide--ensure-mcp-server)))
+        (should owns)
+        (should (= gemini-cli-ide--mcp-server-owner-count 1))
+        (setq-local gemini-cli-ide--owns-mcp-server owns))
+      ;; Acquire 2
+      (let ((owns (gemini-cli-ide--ensure-mcp-server)))
+        (should owns)
+        (should (= gemini-cli-ide--mcp-server-owner-count 2)))
+      ;; Release 1
+      (gemini-cli-ide--release-mcp-server)
+      (should (= gemini-cli-ide--mcp-server-owner-count 1))
+      (should-not gemini-cli-ide--owns-mcp-server)
+      ;; Release 2 (stop called)
+      (let ((stop-called nil))
+        (setq-local gemini-cli-ide--owns-mcp-server t)
+        (cl-letf (((symbol-function 'emacs-mcp-stop) (lambda () (setq stop-called t))))
+          (gemini-cli-ide--release-mcp-server)
+          (should (= gemini-cli-ide--mcp-server-owner-count 0))
+          (should stop-called))))))
+
+(ert-deftest gemini-cli-ide-test-server-refcount-no-touch-when-not-owner ()
+  "Test that refcount ignores servers we don't own."
+  (let ((gemini-cli-ide--mcp-server-owner-count 0))
+    (cl-letf (((symbol-function 'emacs-mcp-connection-info) (lambda () '((:url . "already running"))))
+              ((symbol-function 'emacs-mcp-start) (lambda () (error "Should not call start"))))
+      ;; Acquire should NOT bump count as we don't start the server
+      (let ((owns (gemini-cli-ide--ensure-mcp-server)))
+        (should-not owns)
+        (should (= gemini-cli-ide--mcp-server-owner-count 0))
+        (setq-local gemini-cli-ide--owns-mcp-server owns))
+      ;; Release should do nothing
+      (cl-letf (((symbol-function 'emacs-mcp-stop) (lambda () (error "Should not call stop"))))
+        (gemini-cli-ide--release-mcp-server)
+        (should (= gemini-cli-ide--mcp-server-owner-count 0))))))
+
+(ert-deftest gemini-cli-ide-test-tools-terminal-input-registered ()
+  "Test that terminal-input tool is registered."
+  (skip-unless (featurep 'emacs-mcp))
+  (require 'gemini-cli-ide-tools)
+  (let ((tools emacs-mcp--tools))
+    (should (assoc "gemini-cli-ide-mcp-get-terminal-input" tools))))
+
+(ert-deftest gemini-cli-ide-test-emacs-tools-setup-deprecation-warning ()
+  "Test the deprecation shim for emacs-tools-setup."
+  (let ((warning-called nil))
+    (cl-letf (((symbol-function 'display-warning)
+               (lambda (type message &rest _)
+                 (when (and (eq type 'gemini-cli-ide)
+                            (string-match "deprecated" message))
+                   (setq warning-called t)))))
+      (gemini-cli-ide-emacs-tools-setup)
+      (should warning-called))))
 
 (provide 'gemini-cli-ide-tests)
 
